@@ -1,5 +1,5 @@
-// Isometric scene of Helenaveen, rendered tile by tile by render/run.mjs.
-// World units are meters: x east, y up, z south, origin at the center of the 3 x 3 km area.
+// Isometric scene of St Agnes, rendered tile by tile by render/run.mjs.
+// World units are meters: x east, y up (metres above Ordnance Datum), z south, origin at the center of the area.
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -7,14 +7,14 @@ THREE.ColorManagement.enabled = false; // colors are painted in sRGB and used as
 
 const SUN_AZIMUTH = 250; // keep in sync with scripts/sun.py
 const SUN_ELEVATION = 40;
-const SLAB = 14; // depth of the diorama block under the ground
+const SLAB = 16; // how far the diorama block reaches below the sea
 const CAMERA_ELEVATION = 30; // 2:1 pixel-art isometric
 const TOP_MARGIN = 32;
 const BACKGROUND = new THREE.Color(0x20242c);
-const ROAD_ALPHA = 0.5; // marks road pixels in the color target, see makeRoads and the post pass
+const ROAD_ALPHA = 0.5; // marks road pixels in the color target, see makeGround and the post pass
 
 const DATA = '/data/build';
-const TYPES = { house: 0, barn: 1, shed: 2, greenhouse: 3, tank: 4, silo: 5, canopy: 6, church: 7, tower: 8, turret: 9, school: 10, mast: 11, cross: 12 };
+const TYPES = { house: 0, barn: 1, shed: 2, greenhouse: 3, tank: 4, silo: 5, canopy: 6, church: 7, tower: 8, turret: 9, school: 10, mast: 11, cross: 12, engine: 13, stack: 14 };
 
 const rgb = (r, g, b) => new THREE.Color(r / 255, g / 255, b / 255);
 const hash = (x) => {
@@ -47,27 +47,23 @@ function nearestRoof(c) {
   return best;
 }
 
-// Facades by construction year (BAG): the eras of a Peel village.
-const ERAS = [
-  [1945, [[rgb(138, 68, 50), 4], [rgb(118, 58, 44), 3], [rgb(158, 90, 64), 2], [rgb(226, 220, 206), 1]], rgb(236, 234, 226)],
-  [1970, [[rgb(160, 88, 62), 4], [rgb(176, 106, 74), 3], [rgb(140, 78, 58), 2], [rgb(200, 172, 132), 1]], rgb(232, 230, 222)],
-  [1995, [[rgb(112, 72, 56), 3], [rgb(128, 84, 62), 3], [rgb(196, 170, 128), 2], [rgb(150, 80, 58), 2]], rgb(88, 62, 48)],
-  [9999, [[rgb(150, 80, 60), 3], [rgb(112, 108, 104), 2], [rgb(226, 222, 212), 2], [rgb(84, 64, 52), 2], [rgb(176, 104, 74), 1]], rgb(58, 60, 64)],
+// Facades of a Cornish mining village: killas and granite rubble, lime render in white and cream, a few painted
+// fronts. There is no open register of construction years here, so every building draws from one list.
+const WALLS_HOUSE = [
+  [rgb(232, 226, 210), 5], [rgb(214, 204, 184), 3], [rgb(168, 150, 128), 4], [rgb(142, 128, 112), 3], [rgb(190, 170, 140), 2],
+  [rgb(120, 112, 104), 2], [rgb(226, 206, 178), 1], [rgb(176, 196, 204), 1], [rgb(222, 188, 170), 1],
 ];
-
-function era(m) {
-  return ERAS.find(([until]) => (m.year || 1985) < until);
-}
+const FRAMES = [rgb(240, 238, 230), rgb(240, 238, 230), rgb(60, 78, 92), rgb(84, 108, 96), rgb(70, 64, 60)];
 
 function frameColor(m) {
   if (m.frame_fixed) return rgb(...m.frame_fixed);
-  if (m.kind === 'school') return rgb(176, 40, 34);
-  return era(m)[2];
+  return FRAMES[Math.floor(m.rand * 97) % FRAMES.length];
 }
 
 function roofColor(m) {
   if (m.roof_fixed) return rgb(...m.roof_fixed);
   if (!m.roof_rgb) return ROOFS[4];
+  if (m.roof_exact) return rgb(...m.roof_rgb);
   const c = rgb(...m.roof_rgb);
   // Push saturation up a bit: the photo is hazy, pixel art is not.
   const hsl = {};
@@ -81,7 +77,7 @@ function wallColor(m) {
   if (m.kind === 'tank') return [rgb(74, 98, 82), rgb(150, 150, 140), rgb(64, 72, 80)][Math.floor(m.rand * 3)];
   if (m.kind === 'silo') return rgb(196, 198, 192);
   if (m.kind === 'barn' || m.kind === 'shed') return pickWeighted(WALLS_BARN, m.rand);
-  return pickWeighted(era(m)[1], m.rand);
+  return pickWeighted(WALLS_HOUSE, m.rand);
 }
 
 async function fetchF32(url) {
@@ -185,13 +181,36 @@ vec3 buildingPattern(vec3 base) {
         if (col < 0.58 || col > 1.42 || y < 1.02 || y > 3.58 || abs(y - 2.9) < 0.08) c = vFrame;
       }
       if (y < 0.5) c *= 0.8;
+    } else if (type == 13) {
+      // Mine engine house: rubble walls of killas in rough courses, tall arched openings with nothing behind them
+      // but sky and shadow, a heavier base where the bob wall carried the beam.
+      float row = floor(vUv2.y / 0.55);
+      float stone = fract(sin(dot(vec2(floor((vUv2.x + mod(row, 2.0) * 0.45) / 0.9), row), vec2(12.9898, 78.233))) * 43758.5453);
+      c *= 0.86 + 0.24 * stone;
+      float cx = mod(vUv2.x + 1.6, 3.2) - 1.6;
+      float y = vUv2.y;
+      bool arch = y > 6.4 && length(vec2(cx, y - 6.4)) < 0.62;
+      if (abs(cx) < 0.62 && y > 3.6 && (y < 6.4 || arch)) c = vec3(0.13, 0.13, 0.15);
+      bool door = y > 1.9 && length(vec2(cx, y - 1.9)) < 0.7;
+      if (abs(cx) < 0.7 && (y < 1.9 || door)) c = vec3(0.11, 0.11, 0.12);
+      if (y < 0.5) c *= 0.8;
+    } else if (type == 14) {
+      // Mine stack: stone below, the top third in brick, as the Cornish built them.
+      float row = floor(vUv2.y / 0.5);
+      float stone = fract(sin(dot(vec2(floor((vUv2.x + mod(row, 2.0) * 0.35) / 0.7), row), vec2(12.9898, 78.233))) * 43758.5453);
+      if (vUv2.y > vAxis * 0.66) c = vec3(0.6, 0.34, 0.26) * (0.9 + 0.14 * stone);
+      else c *= 0.86 + 0.24 * stone;
+      if (vUv2.y > vAxis - 0.5) c *= 0.7;
     } else if (type == 11) {
       // Lattice mast: steel cross-bracing.
       float a = fract((vUv2.x + vUv2.y) / 2.2), b = fract((vUv2.y - vUv2.x) / 2.2);
       c = (a < 0.16 || b < 0.16 || mod(vUv2.y, 2.2) < 0.25) ? vec3(0.78, 0.8, 0.82) : vec3(0.42, 0.44, 0.47);
     }
   } else if (roof) {
-    if (type >= 8 && type != 10) {
+    if (type == 13) {
+      // A roofless engine house: you look down into the shell.
+      c = vec3(0.16, 0.15, 0.15);
+    } else if (type >= 8 && type != 10) {
       // Spires and caps: plain slate or metal.
     } else if (type == 3) {
       // Venlo greenhouse roof: rows of glass ridges, lit on one side.
@@ -307,7 +326,8 @@ function toonRamp() {
 
 async function makeTrees() {
   const t = await fetchF32(`${DATA}/trees.bin`);
-  const n = t.length / 10;
+  const N = 11; // x, z, height, crown radius, crown base, kind, r, g, b, seed, ground (scripts/build_trees.py)
+  const n = t.length / N;
   const group = new THREE.Group();
   const variants = [0, 1, 2].map(lumpySphere);
   const ramp = toonRamp();
@@ -317,8 +337,8 @@ async function makeTrees() {
   const counts = [0, 0, 0];
   let conifers = 0;
   for (let i = 0; i < n; i++) {
-    if (t[i * 10 + 5] > 0.5) conifers++;
-    else counts[Math.floor(t[i * 10 + 9] * 3) % 3]++;
+    if (t[i * N + 5] > 0.5) conifers++;
+    else counts[Math.floor(t[i * N + 9] * 3) % 3]++;
   }
   const crowns = variants.map((g, k) => new THREE.InstancedMesh(g, leafMat, counts[k]));
   const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 7), needleMat, conifers);
@@ -328,22 +348,22 @@ async function makeTrees() {
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
   for (let i = 0; i < n; i++) {
-    const [x, z, h, r, base, kind, , , , seed] = t.subarray(i * 10, i * 10 + 10);
+    const [x, z, h, r, base, kind, , , , seed, y0] = t.subarray(i * N, i * N + N);
     q.setFromAxisAngle(up, seed * Math.PI * 2);
     const trunkW = Math.min(0.7, 0.3 + h * 0.02);
     const trunkH = Math.max(1, Math.min(base, h - 2 * Math.max(1, (h - base) / 2, Math.min(r * 0.9, h * 0.42))) + 0.8);
-    m.compose(p.set(x, trunkH / 2, z), q, s.set(trunkW, trunkH, trunkW));
+    m.compose(p.set(x, y0 + trunkH / 2 - 0.4, z), q, s.set(trunkW, trunkH + 0.8, trunkW));
     trunks.setMatrixAt(i, m);
     if (kind > 0.5) {
       const bottom = base * 0.5;
-      m.compose(p.set(x, (bottom + h) / 2, z), q, s.set(r * 0.9, h - bottom, r * 0.9));
+      m.compose(p.set(x, y0 + (bottom + h) / 2, z), q, s.set(r * 0.9, h - bottom, r * 0.9));
       cones.setMatrixAt(ci, m);
       cones.setColorAt(ci++, NEEDLES[Math.floor(seed * 97) % NEEDLES.length]);
     } else {
       const k = Math.floor(seed * 3) % 3;
       // Full, round crowns: seen from above, a tree is mostly crown.
       const half = Math.max(1, (h - base) / 2, Math.min(r * 0.9, h * 0.42));
-      m.compose(p.set(x, h - half, z), q, s.set(r * 1.12, half, r * 1.12));
+      m.compose(p.set(x, y0 + h - half, z), q, s.set(r * 1.12, half, r * 1.12));
       crowns[k].setMatrixAt(fill[k], m);
       const c = LEAVES[Math.floor(seed * 1013) % LEAVES.length].clone();
       c.multiplyScalar(0.92 + 0.16 * hash(seed * 77));
@@ -358,133 +378,144 @@ async function makeTrees() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Ground and diorama block
+// Ground, sea and diorama block
 
-async function makeGround(renderer, area) {
+// The terrain: a grid of heights (scripts/build_terrain.py), row 0 at the north edge.
+async function loadTerrain(area) {
+  const t = area.terrain;
+  const h = await fetchF32(`${DATA}/terrain.bin`);
+  const at = (c, r) => h[Math.min(t.ny, Math.max(0, r)) * (t.nx + 1) + Math.min(t.nx, Math.max(0, c))];
+  return { ...t, h, at };
+}
+
+// One mesh per 500 m chunk, draped over the terrain. Each samples two textures (scripts/build_ground.py): the soft
+// ground, and the roads' own colours with the road surface in the alpha channel. Cutting that alpha at one half
+// gives roads an edge as sharp as a building's; alpha ROAD_ALPHA in the colour target marks road pixels for the
+// post pass, which keeps the painterly filter off them so it can't round those edges.
+async function makeGround(renderer, area, terrain) {
   const group = new THREE.Group();
   const loader = new THREE.TextureLoader();
-  const size = area.chunk;
+  const size = area.chunk, n = Math.round(size / terrain.res);
+  const load = async (url) => {
+    const tex = await loader.loadAsync(url);
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.premultiplyAlpha = false;
+    return tex;
+  };
+  const index = [];
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      const a = r * (n + 1) + c, b = a + 1, d = a + n + 1, e = d + 1;
+      index.push(a, d, b, b, d, e);
+    }
+  }
   const jobs = [];
   for (let ix = 0; ix < area.nx; ix++) {
     for (let iy = 0; iy < area.ny; iy++) {
-      jobs.push(
-        loader.loadAsync(`${DATA}/ground/${ix}_${iy}.png`).then((tex) => {
-          tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-          tex.generateMipmaps = true;
-          tex.minFilter = THREE.LinearMipmapLinearFilter;
-          tex.magFilter = THREE.LinearFilter;
-          tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-          const plane = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ map: tex }));
-          plane.rotation.x = -Math.PI / 2;
-          plane.position.set(-area.hx + size / 2 + ix * size, 0, area.hz - size / 2 - iy * size);
-          group.add(plane);
-        }),
-      );
+      jobs.push(Promise.all([load(`${DATA}/ground/${ix}_${iy}.png`), load(`${DATA}/roads/${ix}_${iy}.png`)]).then(([tex, road]) => {
+        const pos = new Float32Array((n + 1) * (n + 1) * 3), uv = new Float32Array((n + 1) * (n + 1) * 2);
+        const c0 = ix * n, r0 = (area.ny - 1 - iy) * n; // iy counts from the south edge, terrain rows from the north
+        for (let r = 0; r <= n; r++) {
+          for (let c = 0; c <= n; c++) {
+            const i = r * (n + 1) + c;
+            pos.set([-area.hx + (c0 + c) * terrain.res, terrain.at(c0 + c, r0 + r), -area.hz + (r0 + r) * terrain.res], i * 3);
+            uv.set([c / n, 1 - r / n], i * 2);
+          }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+        geo.setIndex(index);
+        const mat = new THREE.ShaderMaterial({
+          uniforms: { ground: { value: tex }, road: { value: road }, roadAlpha: { value: ROAD_ALPHA } },
+          vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+          fragmentShader: `uniform sampler2D ground; uniform sampler2D road; uniform float roadAlpha; varying vec2 vUv;
+            void main() {
+              vec4 r = texture2D(road, vUv);
+              gl_FragColor = r.a > 0.5 ? vec4(r.rgb, roadAlpha) : vec4(texture2D(ground, vUv).rgb, 1.0);
+            }`,
+          blending: THREE.NoBlending,
+          side: THREE.DoubleSide,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.userData.ground = true;
+        mesh.frustumCulled = false;
+        group.add(mesh);
+      }));
     }
   }
   await Promise.all(jobs);
   return group;
 }
 
-// Roads, bridges and paved squares as polygons on the ground, so their edges stay as sharp as a building's
-// instead of blurring with the ground texture, plus a darker kerb line along their outlines. Every triangle and
-// kerb segment goes to the 500 m chunks it touches, clipped to the chunk, sampling that chunk's road layer
-// (scripts/build_ground.py).
-const KERB = 0.72; // kerb brightness, as a fraction of the road surface next to it
-
-async function makeRoads(renderer, area) {
-  renderer.localClippingEnabled = true;
-  const { polygons, edges } = await (await fetch(`${DATA}/roads.json`)).json();
-  const size = area.chunk;
-  const chunks = new Map();
-  const chunk = (ix, iy) => {
-    const key = ix * 1000 + iy;
-    if (!chunks.has(key)) chunks.set(key, { ix, iy, tri: [], line: [] });
-    return chunks.get(key);
+// The sides of the diorama block: the rock St Agnes stands on, cut along the edge of the map. Killas (slate) in
+// bands, a few ochre and red-brown lodes for the tin and copper, soil on top, and the sea where the edge is water.
+function makeSlab(area, terrain) {
+  const base = terrain.sea - SLAB;
+  const pos = [], top = [], sea = [], shade = [], along = [];
+  const strip = (cells, light) => {
+    // cells: [x, z, column, row] along one edge, in the order that makes the quads face outward.
+    for (let i = 1; i < cells.length; i++) {
+      const [ax, az, ac, ar] = cells[i - 1], [bx, bz, bc, br] = cells[i];
+      const ha = terrain.at(ac, ar), hb = terrain.at(bc, br);
+      const wet = ha <= terrain.sea + 0.01 && hb <= terrain.sea + 0.01 ? 1 : 0;
+      pos.push(ax, ha, az, ax, base, az, bx, hb, bz, bx, hb, bz, ax, base, az, bx, base, bz);
+      top.push(ha, ha, hb, hb, ha, hb);
+      const s0 = (i - 1) * terrain.res, s1 = i * terrain.res;
+      along.push(s0, s0, s1, s1, s0, s1);
+      for (let k = 0; k < 6; k++) sea.push(wet), shade.push(light);
+    }
   };
-  // Calls fn(chunk) for every chunk the box [x0, x1] x [z0, z1] overlaps.
-  const overlapping = (x0, x1, z0, z1, fn) => {
-    const i0 = Math.max(0, Math.floor((x0 + area.hx) / size)), i1 = Math.min(area.nx - 1, Math.floor((x1 + area.hx) / size));
-    const j0 = Math.max(0, Math.floor((area.hz - z1) / size)), j1 = Math.min(area.ny - 1, Math.floor((area.hz - z0) / size));
-    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) fn(chunk(i, j));
-  };
-  for (const { rings, bridge } of polygons) {
-    // Without the closing point that repeats the first: triangulateShape drops it itself, in place, which would
-    // shift the indices of every hole after it.
-    const open = (r) => (r.length > 1 && r[0][0] === r.at(-1)[0] && r[0][1] === r.at(-1)[1] ? r.slice(0, -1) : r);
-    const pts = rings.map((r) => open(r).map(([x, z]) => new THREE.Vector2(x, z)));
-    const flat = pts.flat();
-    const y = bridge ? 0.06 : 0.03;
-    for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(pts[0], pts.slice(1))) {
-      const t = [flat[a], flat[b], flat[c]];
-      const xs = t.map((p) => p.x), zs = t.map((p) => p.y);
-      overlapping(Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs), (ch) => ch.tri.push(...t.map((p) => [p.x, y, p.y])));
-    }
-  }
-  for (const ring of edges) {
-    for (let k = 1; k < ring.length; k++) {
-      const [ax, az] = ring[k - 1], [bx, bz] = ring[k];
-      overlapping(Math.min(ax, bx), Math.max(ax, bx), Math.min(az, bz), Math.max(az, bz), (ch) => ch.line.push([ax, 0.08, az], [bx, 0.08, bz]));
-    }
-  }
-
-  const loader = new THREE.TextureLoader();
-  const group = new THREE.Group();
-  await Promise.all([...chunks.values()].map(async ({ ix, iy, tri, line }) => {
-    const cx0 = -area.hx + ix * size, cx1 = cx0 + size;
-    const cz1 = area.hz - iy * size, cz0 = cz1 - size; // iy counts from the south edge; z points south
-    const geometry = (verts) => {
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts.flat(), 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute(verts.flatMap(([x, , z]) => [(x - cx0) / size, (cz1 - z) / size]), 2));
-      return geo;
-    };
-    const tex = await loader.loadAsync(`${DATA}/roads/${ix}_${iy}.png`);
-    // Filtered like the ground, so the surface stays calm; the edges are sharp because the polygon ends there.
-    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    tex.generateMipmaps = true;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    const clippingPlanes = [
-      new THREE.Plane(new THREE.Vector3(1, 0, 0), -cx0), new THREE.Plane(new THREE.Vector3(-1, 0, 0), cx1),
-      new THREE.Plane(new THREE.Vector3(0, 0, 1), -cz0), new THREE.Plane(new THREE.Vector3(0, 0, -1), cz1),
-    ];
-    // Alpha ROAD_ALPHA (written as is, no blending) marks road pixels for the post pass, which keeps the
-    // painterly filter off them so it can't round their edges.
-    const common = { map: tex, clippingPlanes, blending: THREE.NoBlending, opacity: ROAD_ALPHA };
-    if (tri.length) {
-      // Triangulation can come out either way round; the camera only looks down at them, so draw both sides.
-      group.add(new THREE.Mesh(geometry(tri), new THREE.MeshBasicMaterial({ ...common, side: THREE.DoubleSide })));
-    }
-    if (line.length) {
-      group.add(new THREE.LineSegments(geometry(line), new THREE.LineBasicMaterial({ ...common, color: new THREE.Color(KERB, KERB, KERB) })));
-    }
-  }));
-  return group;
-}
-
-function makeSlab(area) {
-  // Peat over sand: the soil Helenaveen was dug out of.
-  const c = document.createElement('canvas');
-  c.width = 4;
-  c.height = 280;
-  const ctx = c.getContext('2d');
-  const layers = [
-    [0, 6, '#4b3a26'], [6, 10, '#2e2218'], [10, 60, '#3a2a1c'], [60, 64, '#2a1f16'], [64, 110, '#45321f'],
-    [110, 116, '#2c2117'], [116, 150, '#56402a'], [150, 158, '#7a6a4a'], [158, 280, '#b39c6c'],
-  ];
-  for (const [a, b, col] of layers) {
-    ctx.fillStyle = col;
-    ctx.fillRect(0, a, 4, b - a);
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  const side = new THREE.MeshLambertMaterial({ map: tex });
-  const top = new THREE.MeshBasicMaterial({ color: 0x3a2a1c });
-  const box = new THREE.Mesh(new THREE.BoxGeometry(area.hx * 2, SLAB, area.hz * 2), [side, side, top, top, side, side]);
-  box.position.y = -SLAB / 2 - 0.02;
-  return box;
+  const xs = [...Array(terrain.nx + 1).keys()], zs = [...Array(terrain.ny + 1).keys()];
+  const X = (c) => -area.hx + c * terrain.res, Z = (r) => -area.hz + r * terrain.res;
+  // The sun stands in the west-south-west: the west and south faces are lit, the other two in shade.
+  strip(xs.map((c) => [X(c), Z(terrain.ny), c, terrain.ny]), 0.92); // south
+  strip(zs.map((r) => [X(0), Z(r), 0, r]), 1.0); // west
+  strip(xs.map((c) => [X(c), Z(0), c, 0]), 0.62); // north
+  strip(zs.map((r) => [X(terrain.nx), Z(r), terrain.nx, r]), 0.7); // east
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('aTop', new THREE.Float32BufferAttribute(top, 1));
+  geo.setAttribute('aSea', new THREE.Float32BufferAttribute(sea, 1));
+  geo.setAttribute('aShade', new THREE.Float32BufferAttribute(shade, 1));
+  geo.setAttribute('aAlong', new THREE.Float32BufferAttribute(along, 1));
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    blending: THREE.NoBlending,
+    vertexShader: `attribute float aTop; attribute float aSea; attribute float aShade; attribute float aAlong;
+      varying float vTop; varying float vSea; varying float vShade; varying float vAlong; varying float vY;
+      void main() { vTop = aTop; vSea = aSea; vShade = aShade; vAlong = aAlong; vY = position.y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `varying float vTop; varying float vSea; varying float vShade; varying float vAlong; varying float vY;
+      float hash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
+      void main() {
+        float depth = vTop - vY;
+        // Beds of slate, tilted a little and of uneven thickness.
+        float bed = vY + 0.06 * vAlong + 1.6 * sin(vAlong * 0.011) + 0.8 * sin(vAlong * 0.037);
+        float k = floor(bed / 2.6);
+        float r = hash(k);
+        vec3 c = mix(vec3(0.36, 0.33, 0.31), vec3(0.52, 0.47, 0.42), r);
+        if (r > 0.86) c = vec3(0.62, 0.42, 0.26);        // ochre: an iron-stained lode
+        else if (r < 0.07) c = vec3(0.45, 0.25, 0.2);    // red-brown: tin ground
+        else if (r > 0.78) c = vec3(0.66, 0.63, 0.58);   // pale: a granite or elvan sheet
+        if (fract(bed / 2.6) < 0.1) c *= 0.74;           // the joint between two beds
+        if (vSea > 0.5) {
+          if (depth < 7.0) c = mix(vec3(0.24, 0.6, 0.68), vec3(0.07, 0.27, 0.42), depth / 7.0);
+          else if (depth < 7.6) c = vec3(0.78, 0.7, 0.52); // sand on the sea bed
+        } else if (depth < 0.9) {
+          c = vec3(0.3, 0.23, 0.16); // soil
+        }
+        gl_FragColor = vec4(c * vShade, 1.0);
+      }`,
+  });
+  const walls = new THREE.Mesh(geo, mat);
+  walls.frustumCulled = false;
+  walls.userData.ground = true;
+  return walls;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -493,15 +524,16 @@ function makeSlab(area) {
 const deg = Math.PI / 180;
 
 // look: the compass direction the camera looks in, in degrees; 45 is north-east, and every quarter turn works.
-function makeCamera(scale, area, look) {
+function makeCamera(scale, area, look, terrain) {
   const el = CAMERA_ELEVATION * deg, az = look * deg;
   // Screen x of a ground point is x cos(az) + z sin(az), its depth x sin(az) - z cos(az): at the corners of the area
   // that reaches hx |cos| + hz |sin| and hx |sin| + hz |cos|. Looking north-east, both are (hx + hz) / sqrt(2).
   const u = area.hx * Math.abs(Math.cos(az)) + area.hz * Math.abs(Math.sin(az));
   const vGround = (area.hx * Math.abs(Math.sin(az)) + area.hz * Math.abs(Math.cos(az))) * Math.sin(el);
   const width = Math.round(2 * u * scale);
-  const top = vGround + TOP_MARGIN;
-  const bottom = -vGround - SLAB * Math.cos(el) - 6;
+  // Screen height of a point is its ground position plus its height times cos(el).
+  const top = vGround + terrain.max * Math.cos(el) + TOP_MARGIN;
+  const bottom = -vGround + (terrain.sea - SLAB) * Math.cos(el) - 6;
   const height = Math.round((top - bottom) * scale);
   const cam = new THREE.OrthographicCamera(-width / scale / 2, width / scale / 2, top, top - height / scale, 10, 9000);
   const fwd = new THREE.Vector3(Math.cos(el) * Math.sin(az), -Math.sin(el), -Math.cos(el) * Math.cos(az));
@@ -533,7 +565,7 @@ const outlineShader = {
 
     // Kuwahara filter: each pixel takes the mean of whichever neighbouring quadrant is the most uniform.
     // It flattens grain into painted areas but keeps edges, the look of a hand-coloured illustration.
-    // Road pixels (alpha below 0.75, see makeRoads) are skipped: a flat road would otherwise win every quadrant
+    // Road pixels (alpha below 0.75, see makeGround) are skipped: a flat road would otherwise win every quadrant
     // next to it and spread over the verge.
     vec3 kuwahara(vec2 uv) {
       vec3 bestMean = texture2D(tColor, uv).rgb;
@@ -561,12 +593,10 @@ const outlineShader = {
 
     void main() {
       if (objectsPass) {
-        // A mask of what stands up from the ground: white where the visible surface is more than 30 cm up (buildings,
-        // trees, masts), black for the ground, roads and bridges. The viewer draws this part of the map again over
-        // the cars and walkers that are behind it.
-        float z = texture2D(tDepth, vUv).x;
-        vec4 p = invViewProj * vec4(vUv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
-        gl_FragColor = vec4(vec3(z < 1.0 && p.y / p.w > 0.3 ? 1.0 : 0.0), 1.0);
+        // A mask of what stands up from the ground: the scene is drawn with buildings, trees and masts in white and
+        // the ground in black (see main). The viewer draws this part of the map again over the cars and walkers that
+        // are behind it.
+        gl_FragColor = vec4(vec3(texture2D(tColor, vUv).r > 0.5 ? 1.0 : 0.0), 1.0);
         return;
       }
       vec4 c = texture2D(tColor, vUv);
@@ -602,10 +632,17 @@ async function main() {
   const area = await (await fetch(`${DATA}/area.json`)).json();
   area.hx = (area.xmax - area.xmin) / 2;
   area.hz = (area.ymax - area.ymin) / 2;
-  const [ground, roads, buildings, trees] = await Promise.all([makeGround(renderer, area), makeRoads(renderer, area), makeBuildings(), makeTrees()]);
-  scene.add(ground, roads, buildings, trees, makeSlab(area));
+  const terrain = await loadTerrain(area);
+  const [ground, buildings, trees] = await Promise.all([makeGround(renderer, area, terrain), makeBuildings(), makeTrees()]);
+  scene.add(ground, buildings, trees, makeSlab(area, terrain));
+  if (objectsPass) {
+    scene.background = new THREE.Color(0x000000);
+    const white = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    const black = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide });
+    scene.traverse((o) => { if (o.isMesh) o.material = o.userData.ground ? black : white; });
+  }
 
-  const { cam, width, height } = makeCamera(scale, area, look);
+  const { cam, width, height } = makeCamera(scale, area, look, terrain);
   let target = null;
   const post = new THREE.ShaderMaterial(outlineShader);
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), post);

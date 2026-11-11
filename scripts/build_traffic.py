@@ -4,19 +4,19 @@
 # ///
 """Traffic for the viewer: lanes along the OpenStreetMap roads and paths that little cars, cyclists and walkers use.
 
-A lane runs one way along a stretch of road between two junctions, on the right-hand side: the BGT carriageways and
-cycle paths show how wide the road really is and where it lies, since the OpenStreetMap line is seldom exactly in
-the middle. Cars keep to the middle of their half, cyclists to its edge, walkers to the pavement when the BGT has one
-next to the road, and to the edge of the road when it doesn't. Where a building or a tree
-crown stands in front of the road on screen, the lane records a hidden stretch, so a car disappears behind it instead
-of being drawn on the roof; under a tree crown it shows faintly, as if seen through the leaves. Roads that leave the map end in an exit: a car that drives out comes back in at another
+A lane runs one way along a stretch of road between two junctions, on the left-hand side, as in Britain. There is
+no open map of carriageway widths here, so a lane lies a fixed distance left of the OpenStreetMap line, by class of
+road. Cars keep to the middle of their half, cyclists and walkers to its edge. Where a building, a tree crown or the
+land itself (a hill, the side of a coombe) stands in front of the road on screen, the lane records a hidden stretch,
+so a car disappears behind it instead of being drawn on the roof or the hillside; under a tree crown it shows
+faintly, as if seen through the leaves. Roads that leave the map end in an exit: a car that drives out comes back in at another
 exit of the same road class.
 
 Output: data/build/traffic.json
   lanes  [{"e": road stretch, "a": from node, "b": to node, "p": [[x, z], ...] in local meters (x east, z south, as in
           render/scene.js), "c": road class, "v": speed for cars (m/s), "w", "wb" and "ww": weight when a car, a
           cyclist or a walker picks its next lane (0: not for them), "d", "db" and "dw": cars, cyclists and walkers
-          per km, "bo" and "wo": how much further right a cyclist and a walker go than the lane,
+          per km, "bo" and "wo": how much further right a cyclist and a walker go than the lane (negative: left),
           "h": per view in config.VIEWS, [[s0, s1], ...] stretches in meters along the lane behind a building,
           "t": the same under tree crowns}]
   exits  the nodes where a road leaves the map
@@ -29,26 +29,24 @@ from collections import Counter
 
 import numpy as np
 from PIL import Image, ImageDraw
-from shapely import affinity, contains_xy, prepare
-from shapely.geometry import LineString, Point, box, shape
-from shapely.ops import unary_union
+from shapely.geometry import LineString, Point, box
 
-from config import BUILD, CX, CY, RAW, VIEWS, XMAX, XMIN, YMAX, YMIN
-from geo import screen, wgs_to_rd
+from config import BUILD, CX, CY, LIDAR_RES, RAW, VIEWS, XMAX, XMIN, YMAX, YMIN
+from geo import screen, wgs_to_grid
 
 RES = 0.5  # occlusion raster, screen meters per pixel
 STEP = 0.5  # lane sampling for hidden stretches, meters
 
-# Road class: default speed (km/h); for cars the weight at junctions (they prefer the bigger road) and cars per km of
+# Road class: default speed (km/h, when OpenStreetMap gives no limit); for cars the weight at junctions (they prefer the bigger road) and cars per km of
 # lane; the same two for cyclists, who prefer cycle paths and quiet roads, and for walkers, who prefer footpaths,
 # village streets and farm tracks.
 CLASSES = {
     "motorway": (120, 10, 8.0, 0, 0, 0, 0),
     "trunk": (100, 8, 4.0, 0, 0, 0, 0),
     "primary": (80, 6, 2.5, 0.5, 0.1, 0.3, 0.05),
-    "secondary": (80, 5, 2.0, 1, 0.15, 0.5, 0.05),
-    "tertiary": (60, 4, 1.6, 1.5, 0.3, 1, 0.25),
-    "unclassified": (60, 3, 0.9, 3, 0.4, 1.5, 0.25),
+    "secondary": (65, 5, 2.0, 1, 0.15, 0.5, 0.05),
+    "tertiary": (50, 4, 1.6, 1.5, 0.3, 1, 0.25),
+    "unclassified": (40, 3, 0.9, 3, 0.4, 1.5, 0.25),
     "residential": (30, 2, 1.6, 3, 0.6, 3, 1.5),
     "living_street": (15, 1, 1.0, 2, 0.5, 3, 1.5),
     "service": (15, 0.4, 0.4, 0.4, 0.05, 0.5, 0.1),
@@ -62,7 +60,7 @@ BIKES = {"yes", "designated", "permissive"}
 
 
 def local(lat, lon):
-    x, y = wgs_to_rd(lat, lon)
+    x, y = wgs_to_grid(lat, lon)
     return x - CX, CY - y
 
 
@@ -95,7 +93,7 @@ def road_ways():
             kmh, weight = min(kmh, 70), weight / 2
         digits = "".join(ch for ch in t.get("maxspeed", "") if ch.isdigit())
         if digits:
-            kmh = int(digits)
+            kmh = int(digits) * (1.609 if "mph" in t["maxspeed"] else 1)
         oneway = t.get("oneway") in ("yes", "1", "true") or t.get("junction") in ("roundabout", "circular")
         oneway = oneway or (base == "motorway" and t.get("oneway") != "no")
         if t.get("oneway") == "-1":
@@ -155,71 +153,6 @@ def clip(edges):
     clip.exits = exits
 
 
-def surfaces():
-    """The BGT carriageways and cycle paths in local meters, to measure where each road lies and how wide it is."""
-    groups = {"road": [], "cycle": [], "foot": []}
-    for f in json.loads((RAW / "bgt_wegdeel.geojson").read_text())["features"]:
-        fn = f["properties"].get("functie") or ""
-        key = "road" if fn.startswith("rijbaan") else "cycle" if fn == "fietspad" else "foot" if fn == "voetpad" else None
-        if key and f["geometry"]:
-            groups[key].append(affinity.affine_transform(shape(f["geometry"]), [1, 0, 0, -1, -CX, CY]).buffer(0))
-    out = {k: unary_union(v) for k, v in groups.items()}
-    for g in out.values():
-        prepare(g)
-    return out
-
-
-def measure(pts, surface, foot):
-    """Where the road surface lies around a polyline: (center, half width, pavement right, pavement left), all in meters
-    to the right of the line, a pavement None where there is none. Measured across every 4 m, away from the junctions
-    at the ends, and the median taken."""
-    p = np.asarray(pts, dtype=np.float64)
-    p = p[np.r_[True, np.linalg.norm(np.diff(p, axis=0), axis=1) > 0.05]]
-    seg = np.diff(p, axis=0)
-    if len(seg) == 0:
-        return None
-    length = np.linalg.norm(seg, axis=1)
-    cum = np.r_[0, np.cumsum(length)]
-    s = np.arange(4, cum[-1] - 4, 4.0)
-    if len(s) < 2:
-        return None
-    xs, zs = np.interp(s, cum, p[:, 0]), np.interp(s, cum, p[:, 1])
-    i = np.clip(np.searchsorted(cum, s) - 1, 0, len(seg) - 1)
-    d = seg[i] / length[i][:, None]
-    n = np.stack([-d[:, 1], d[:, 0]], axis=1)
-    keep = contains_xy(surface, xs, zs)
-    if keep.sum() < 2:
-        return None
-    xs, zs, n = xs[keep], zs[keep], n[keep]
-    right, left = reach(surface, xs, zs, n, 0, 10), reach(surface, xs, zs, -n, 0, 10)
-    center, half = float(np.median((right - left) / 2)), float(np.median((right + left) / 2))
-    if not 1 <= half <= 6:
-        return None
-    return center, half, pavement(foot, xs, zs, n, right), pavement(foot, xs, zs, -n, left)
-
-
-def reach(area, xs, zs, n, start, far, step=0.2):
-    """Per sample, how far along n from start (a number or one per sample) the area goes on; start must be inside."""
-    ds = np.arange(0.1, far, step)
-    at = np.broadcast_to(np.asarray(start, dtype=np.float64), xs.shape)[:, None] + ds
-    inside = contains_xy(area, xs[:, None] + n[:, :1] * at, zs[:, None] + n[:, 1:] * at)
-    first = np.where(inside.all(axis=1), len(ds) - 1, np.argmax(~inside, axis=1))
-    return np.broadcast_to(np.asarray(start, dtype=np.float64), xs.shape) + ds[first] - 0.1
-
-
-def pavement(foot, xs, zs, n, edge):
-    """The middle of a pavement beside the road, in meters from the line, when most of the way has one within 4 m of
-    the road's edge."""
-    ds = np.arange(0.1, 4, 0.2)
-    on = contains_xy(foot, xs[:, None] + n[:, :1] * (edge[:, None] + ds), zs[:, None] + n[:, 1:] * (edge[:, None] + ds))
-    found = on.any(axis=1)
-    if found.mean() < 0.6:
-        return None
-    near = edge[found] + ds[np.argmax(on[found], axis=1)]
-    far = reach(foot, xs[found], zs[found], n[found], near, 6)
-    return float(np.median((near + far) / 2))
-
-
 def offset(pts, d):
     """The polyline moved d meters to the right of its direction (x east, z south: right of east is south)."""
     p = np.asarray(pts, dtype=np.float64)
@@ -238,46 +171,51 @@ def offset(pts, d):
 
 
 def lanes(edges):
-    surface = surfaces()
-    out, measured = [], 0
+    out = []
     for i, e in enumerate(edges):
-        dirs = [(e["pts"], e["a"], e["b"], 1)]
+        dirs = [(e["pts"], e["a"], e["b"])]
         if e["oneway"] == -1:
-            dirs = [(e["pts"][::-1], e["b"], e["a"], -1)]
+            dirs = [(e["pts"][::-1], e["b"], e["a"])]
         elif not e["oneway"]:
-            dirs.append((e["pts"][::-1], e["b"], e["a"], -1))
-        kind = {"motorway": None, "cycleway": "cycle", "footway": None, "track": None}.get(e["c"], "road")
-        fit = kind and measure(e["pts"], surface[kind], surface["foot"])
-        measured += bool(fit)
-        for pts, a, b, sign in dirs:
-            if e["c"] == "motorway":
-                off = bike = walk = 1.6
-            elif fit:
-                center, half = fit[0] * sign, fit[1]
-                side = fit[2] if sign > 0 else fit[3]
-                if side is not None:
-                    side *= sign
-                if e["c"] == "cycleway":
-                    off = center if e["oneway"] else center + half / 2
-                    bike = off
-                    walk = side if side is not None else center + half - 0.3
-                else:
-                    off = center if e["oneway"] else center + min(half / 2, 1.9)
-                    bike = center + half - 0.45
-                    walk = side if side is not None else center + half - 0.2
-            else:
-                width = {"cycleway": 0.6, "footway": 0.35, "track": 0.8}.get(e["c"])
-                width = width or (1.3 if e["c"] in ("residential", "living_street", "service", "unclassified") else 1.7)
-                off = 0.0 if e["oneway"] else width
-                bike = off if e["c"] in ("cycleway", "track") else off + 0.75
-                walk = off if e["c"] in ("footway", "track") else bike + 0.25
+            dirs.append((e["pts"][::-1], e["b"], e["a"]))
+        # Half the width of the road, by class: Cornish lanes are narrow, and many take only one car.
+        width = {"cycleway": 0.6, "footway": 0.3, "track": 0.6}.get(e["c"])
+        width = width or (1.0 if e["c"] in ("residential", "living_street", "service", "unclassified") else 1.5)
+        for pts, a, b in dirs:
+            # Britain drives on the left: a negative offset is to the left of the direction of travel.
+            off = 0.0 if e["oneway"] else -width
+            bike = off if e["c"] in ("cycleway", "track") else off - 0.7
+            walk = off if e["c"] in ("footway", "track") else bike - 0.25
             p = offset(pts, off)
             if len(p) >= 2:
                 lane = {"e": i, "a": a, "b": b, "p": p, **{k: e[k] for k in ("c", "v", "w", "d", "wb", "db", "ww", "dw")}}
                 lane["bo"], lane["wo"] = round(bike - off, 2), round(walk - off, 2)
                 out.append(lane)
-    lanes.measured = f"{measured} of {len(edges)} stretches of road measured on the BGT"
     return out
+
+
+def heights(dtm, xs, zs):
+    """Ground height at local positions (x east, z south)."""
+    rows = np.clip(((YMAX - (CY - zs)) / LIDAR_RES).astype(int), 0, dtm.shape[0] - 1)
+    cols = np.clip(((xs + CX - XMIN) / LIDAR_RES).astype(int), 0, dtm.shape[1] - 1)
+    return dtm[rows, cols]
+
+
+def behind_land(dtm, xs, zs, hs, look, step=4.0):
+    """Which ground points the land itself hides in this view: walk from each point toward the camera along its line
+    of sight, which climbs as it comes nearer, and see whether the ground anywhere stands above it."""
+    a = math.radians(look)
+    c, sn, cos30 = math.cos(a), math.sin(a), math.cos(math.radians(30))
+    u, w = xs * c + zs * sn, xs * sn - zs * c  # across the screen, and away from the camera
+    hidden = np.zeros(len(xs), bool)
+    top = float(dtm.max())
+    for k in range(1, int(2 * cos30 * (top - float(hs.min())) / step) + 2):
+        wk = w - k * step
+        ray = hs + k * step / (2 * cos30) + 1.2  # a car's roof may still show over the brow
+        if (ray > top).all():
+            break
+        hidden |= heights(dtm, u * c + wk * sn, u * sn - wk * c) > ray
+    return hidden
 
 
 def occluders(bounds, look):
@@ -292,24 +230,24 @@ def occluders(bounds, look):
     px = lambda u, v: ((u - u0) / RES, (v1 - v) / RES)
 
     b = np.fromfile(BUILD / "buildings.bin", dtype=np.float32).reshape(-1, 12)
-    u, v = screen(b[:, 0], b[:, 2], b[:, 1], look)
+    u, v = screen(b[:, 0], b[:, 2], b[:, 1], look)  # building heights are absolute (metres above datum)
     tri = np.stack([(u - u0) / RES, (v1 - v) / RES], axis=1).reshape(-1, 3, 2)
     for t in tri:
         draw.polygon([tuple(q) for q in t], fill=1)
 
     buildings = np.array(img, dtype=bool)
     draw = ImageDraw.Draw(trees)
-    t = np.fromfile(BUILD / "trees.bin", dtype=np.float32).reshape(-1, 10)
-    for x, z, ht, r, base, kind in t[:, :6]:
+    t = np.fromfile(BUILD / "trees.bin", dtype=np.float32).reshape(-1, 11)
+    for x, z, ht, r, base, kind, g in t[:, [0, 1, 2, 3, 4, 5, 10]]:
         if kind > 0.5:  # conifer: a cone from half the crown base up to the top
             bottom, rr = base * 0.5, r * 0.9
-            cu, cv = screen(x, z, bottom, look)
-            _, tv = screen(x, z, ht, look)
+            cu, cv = screen(x, z, g + bottom, look)
+            _, tv = screen(x, z, g + ht, look)
             ring = [px(cu + rr * math.cos(a), cv + 0.5 * rr * math.sin(a)) for a in np.linspace(math.pi, 2 * math.pi, 7)]
             draw.polygon([*ring, px(cu, tv)], fill=1)
         else:  # round crown, as render/scene.js scales it: an ellipsoid r * 1.12 wide and `half` high
             half = max(1, (ht - base) / 2, min(r * 0.9, ht * 0.42))
-            cu, cv = screen(x, z, ht - half, look)
+            cu, cv = screen(x, z, g + ht - half, look)
             a = r * 1.12
             bv = math.hypot(0.5 * a, math.cos(math.radians(30)) * half)
             (l, top), (rgt, bot) = px(cu - a, cv + bv), px(cu + a, cv - bv)
@@ -336,25 +274,28 @@ def stretches_where(hit, s):
 
 
 def hidden(lanes_):
+    dtm = np.load(BUILD / "dtm.npy")
     samples = []
     for ln in lanes_:
         p = ln["p"]
         seg = np.linalg.norm(np.diff(p, axis=0), axis=1)
         cum = np.r_[0, np.cumsum(seg)]
         s = np.arange(0, cum[-1], STEP)
-        samples.append((s, np.interp(s, cum, p[:, 0]), np.interp(s, cum, p[:, 1])))
+        xs, zs = np.interp(s, cum, p[:, 0]), np.interp(s, cum, p[:, 1])
+        samples.append((s, xs, zs, heights(dtm, xs, zs)))
     for ln in lanes_:
         ln["h"], ln["t"] = [], []
     for look in VIEWS:
-        uv = [screen(xs, zs, 0, look) for _, xs, zs in samples]
+        uv = [screen(xs, zs, hs, look) for _, xs, zs, hs in samples]
         us, vs = np.concatenate([u for u, _ in uv]), np.concatenate([v for _, v in uv])
         bounds = (us.min() - 2, vs.min() - 2, us.max() + 2, vs.max() + 2)
         buildings, trees = occluders(bounds, look)
         u0, _, _, v1 = bounds
-        for ln, (s, _, _), (u, v) in zip(lanes_, samples, uv):
+        for ln, (s, xs, zs, hs), (u, v) in zip(lanes_, samples, uv):
             at = ((v1 - v) / RES).astype(int), ((u - u0) / RES).astype(int)
-            ln["h"].append(stretches_where(buildings[at], s))
-            ln["t"].append(stretches_where(trees[at] & ~buildings[at], s))
+            gone = buildings[at] | behind_land(dtm, xs, zs, hs, look)
+            ln["h"].append(stretches_where(gone, s))
+            ln["t"].append(stretches_where(trees[at] & ~gone, s))
 
 
 def main():
@@ -368,7 +309,7 @@ def main():
     km = sum(np.linalg.norm(np.diff(np.array(ln["p"]), axis=0), axis=1).sum() for ln in out) / 1000
     share = sum(sum(b - a for a, b in ln["h"][0]) for ln in out) / 1000 / km
     leafy = sum(sum(b - a for a, b in ln["t"][0]) for ln in out) / 1000 / km
-    print(f"{len(out)} lanes, {km:.0f} km, {len(clip.exits)} exits, {share:.0%} behind buildings, {leafy:.0%} under trees; {lanes.measured}")
+    print(f"{len(out)} lanes, {km:.0f} km, {len(clip.exits)} exits, {share:.0%} behind buildings or hills, {leafy:.0%} under trees")
 
 
 if __name__ == "__main__":

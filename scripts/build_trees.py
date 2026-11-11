@@ -1,44 +1,25 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "scipy", "scikit-image", "tifffile", "imagecodecs", "pillow"]
+# dependencies = ["numpy", "scipy", "scikit-image", "pillow"]
 # ///
-"""Find individual trees in the AHN canopy height model.
+"""Find individual trees in the lidar canopy height model (first-return surface minus bare earth).
 
 Output (data/build/):
-  trees.bin   float32 per tree: x, z, height, crown radius, crown base, kind, r, g, b, seed
-  chm.npy     canopy height model at 0.5 m (row 0 north), used for hedges and shadows
+  trees.bin   float32 per tree: x, z, height, crown radius, crown base, kind, r, g, b, seed, ground height
+  chm.npy     canopy height model at LIDAR_RES (row 0 north), used for hedges, scrub and shadows
 """
 
 import json
 
 import numpy as np
-import tifffile
 from PIL import Image, ImageDraw
 from scipy import ndimage as ndi
 from skimage.segmentation import watershed
 
-from aerial import load_aerial
-from config import BUILD, CHUNK, CX, CY, GROUND_RES, NX, NY, RAW, XMIN, YMAX
+from config import BUILD, CX, CY, LIDAR_RES as RES, RAW, XMIN, YMAX
+from geo import wgs_to_grid
 
-RES = 0.5
-
-
-def mosaic(cov):
-    px = int(CHUNK / RES)
-    out = np.full((NY * px, NX * px), np.nan, dtype=np.float32)
-    for ix in range(NX):
-        for iy in range(NY):
-            a = tifffile.imread(RAW / "ahn" / f"{cov}_{ix}_{iy}.tif").astype(np.float32)
-            a[(a > 1000) | (a < -100)] = np.nan
-            row = (NY - 1 - iy) * px
-            out[row : row + px, ix * px : ix * px + px] = a[:px, :px]
-    return out
-
-
-def fill_nearest(a):
-    bad = np.isnan(a)
-    idx = ndi.distance_transform_edt(bad, return_distances=False, return_indices=True)
-    return a[tuple(idx)]
+COLS = 11
 
 
 def footprint_mask(shape, grow_m):
@@ -51,16 +32,21 @@ def footprint_mask(shape, grow_m):
 
 
 def main():
-    dsm = mosaic("dsm_05m")
-    dtm = fill_nearest(mosaic("dtm_05m"))
-    chm = np.nan_to_num(dsm - dtm, nan=0.0)
-    chm[chm < 0] = 0
-    chm[footprint_mask(chm.shape, 1.0)] = 0
+    dtm, dsm, sea = np.load(BUILD / "dtm.npy"), np.load(BUILD / "dsm.npy"), np.load(BUILD / "sea.npy")
+    chm = np.clip(dsm - dtm, 0, None)
+    chm[footprint_mask(chm.shape, 1.5)] = 0
+    chm[sea] = 0
+    # On a cliff the first return and the bare earth differ by metres without anything growing there: the two
+    # models smooth a near-vertical face differently. Nothing counts as canopy where the ground is that steep.
+    gy, gx = np.gradient(ndi.gaussian_filter(dtm, 1.0), RES)
+    steep = np.hypot(gx, gy) > 1.0  # 45 degrees
+    chm[ndi.binary_dilation(steep, iterations=2)] = 0
+    chm[chm > 35] = 0  # a bird, a wire
     np.save(BUILD / "chm.npy", chm.astype(np.float16))
 
-    smooth = ndi.gaussian_filter(chm, 1.2)
+    smooth = ndi.gaussian_filter(chm, 0.7)
     canopy = smooth > 2.5
-    peaks = (smooth == ndi.maximum_filter(smooth, size=5)) & (smooth > 3.5)
+    peaks = (smooth == ndi.maximum_filter(smooth, size=3)) & (smooth > 3.5)
     ys, xs = np.nonzero(peaks)
     hs = smooth[ys, xs]
 
@@ -73,7 +59,7 @@ def main():
         if taken[y, x]:
             continue
         keep.append(i)
-        r = int(np.clip(0.12 * h + 1.0, 1.5, 4.5) / RES)
+        r = int(round(np.clip(0.12 * h + 1.0, 1.5, 4.5) / RES))
         taken[max(0, y - r) : y + r + 1, max(0, x - r) : x + r + 1] = True
     ys, xs, hs = ys[keep], xs[keep], hs[keep]
 
@@ -83,45 +69,48 @@ def main():
     areas = ndi.sum_labels(np.ones_like(labels), labels, index=np.arange(1, len(ys) + 1)) * RES * RES
     radius = np.clip(np.sqrt(areas / np.pi), 1.0, 7.5)
 
-    # Crown color from the aerial photo: evergreens stay green in the (spring) photo.
-    aerial = load_aerial().astype(np.float32)
-    scale = int(RES / GROUND_RES)
-    small = aerial.reshape(aerial.shape[0] // scale, scale, aerial.shape[1] // scale, scale, 3).mean(axis=(1, 3))
-    cols = np.stack([ndi.median(small[..., c], labels, index=np.arange(1, len(ys) + 1)) for c in range(3)], -1)
-    cols = np.nan_to_num(cols, nan=90.0)
-    r, g, b = cols[:, 0], cols[:, 1], cols[:, 2]
-    evergreen = (g > r + 4) & (g > b + 4) & (g < 110)
-
+    # No open aerial photo here to tell evergreens from the rest. On this coast nearly every tree is a wind-cut
+    # sycamore, ash or thorn; a few gardens and shelter belts have Monterey pine and cypress.
     rng = np.random.default_rng(7)
+    kind = (rng.random(len(hs)) < 0.06).astype(np.float32)
     wx = XMIN + (xs + 0.5) * RES
     wy = YMAX - (ys + 0.5) * RES
-    kind = evergreen.astype(np.float32)
     base = np.clip(hs * rng.uniform(0.25, 0.4, len(hs)), 1.2, 6)
-    trees = np.stack(
-        [wx - CX, CY - wy, hs, radius, base, kind, r / 255, g / 255, b / 255, rng.random(len(hs))], -1
-    ).astype(np.float32)
+    ground = dtm[ys, xs]
+    grey = np.full(len(hs), 0.35)
+    trees = np.stack([wx - CX, CY - wy, hs, radius, base, kind, grey, grey + 0.07, grey - 0.1, rng.random(len(hs)), ground], -1).astype(np.float32)
 
-    # Municipal trees from the BGT that the canopy model missed (young street trees).
-    bgt = json.load(open(RAW / "bgt_vegetatieobject_punt.geojson"))["features"]
-    pts = np.array([f["geometry"]["coordinates"][:2] for f in bgt])
-    have = np.zeros(chm.shape, bool)
-    have[ys, xs] = True
-    have = ndi.binary_dilation(have, iterations=int(3 / RES))
+    # Single trees mapped in OpenStreetMap that the canopy model missed (young street trees).
     extra = []
-    for x, y in pts:
-        col, row = int((x - XMIN) / RES), int((YMAX - y) / RES)
-        if not (0 <= col < chm.shape[1] and 0 <= row < chm.shape[0]) or have[row, col]:
-            continue
-        h = max(float(chm[row, col]), 4.0 + rng.random() * 3)
-        extra.append([x - CX, CY - y, h, 1.2 + h * 0.15, 1.5, 0, 0.35, 0.42, 0.25, rng.random()])
+    path = RAW / "osm_landmarks.json"
+    if path.exists():
+        have = np.zeros(chm.shape, bool)
+        have[ys, xs] = True
+        have = ndi.binary_dilation(have, iterations=int(3 / RES))
+        for el in json.loads(path.read_text())["elements"]:
+            if el["type"] != "node" or el.get("tags", {}).get("natural") != "tree":
+                continue
+            x, y = wgs_to_grid(el["lat"], el["lon"])
+            col, row = int((x - XMIN) / RES), int((YMAX - y) / RES)
+            if not (0 <= col < chm.shape[1] and 0 <= row < chm.shape[0]) or have[row, col] or sea[row, col]:
+                continue
+            h = max(float(chm[row, col]), 4.0 + rng.random() * 3)
+            extra.append([x - CX, CY - y, h, 1.2 + h * 0.15, 1.5, 0, 0.35, 0.42, 0.25, rng.random(), dtm[row, col]])
     if extra:
         trees = np.concatenate([trees, np.array(extra, dtype=np.float32)])
-    # Masts show up in the canopy model as very tall, thin "trees".
+    # Masts and mine stacks show up in the canopy model as very tall, thin "trees"; so do the roofless walls of an
+    # engine house.
     lm = BUILD / "landmarks.json"
-    for m in json.loads(lm.read_text()).get("masts", []) if lm.exists() else []:
-        trees = trees[np.hypot(trees[:, 0] - (m["x"] - CX), trees[:, 1] - (CY - m["y"])) > 6]
+    named = json.loads(lm.read_text()) if lm.exists() else {}
+    tall = list(named.get("masts", []))
+    for b in named.get("buildings", {}).values():
+        tall += b.get("stacks", [])
+        if b.get("style") == "engine" and b.get("stacks"):
+            tall += [{"x": s["x"] - s["dx"], "y": s["y"] - s["dy"]} for s in b["stacks"]]
+    for m in tall:
+        trees = trees[np.hypot(trees[:, 0] - (m["x"] - CX), trees[:, 1] - (CY - m["y"])) > 9]
     trees.tofile(BUILD / "trees.bin")
-    print(f"{len(trees)} trees ({len(extra)} from BGT), {int(kind.sum())} evergreen, mean radius {radius.mean():.1f} m")
+    print(f"{len(trees)} trees ({len(extra)} from OpenStreetMap), {int(kind.sum())} evergreen, mean radius {radius.mean():.1f} m")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 // Screenshot a page: node render/shot.mjs <url> <out-prefix> [clickSelector...]
 import { chromium } from 'playwright';
 const [url, out, ...clicks] = process.argv.slice(2);
-const browser = await chromium.launch({ headless: true, args: ['--use-angle=vulkan', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ headless: true, args: [`--use-angle=${process.platform === 'darwin' ? 'metal' : 'vulkan'}`, '--ignore-gpu-blocklist'] });
 for (const [name, viewport] of [['desktop', { width: 1440, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
   const page = await browser.newPage({ viewport });
   const errors = [];

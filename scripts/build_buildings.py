@@ -1,47 +1,43 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["numpy", "mapbox-earcut", "pillow", "scipy"]
+# dependencies = ["numpy", "mapbox-earcut", "pillow", "scipy", "shapely"]
 # ///
-"""Turn 3D BAG LoD2.2 solids into one triangle soup for the renderer.
+"""Turn building outlines and lidar into one triangle soup for the renderer.
+
+England has no open 3D building model like the Dutch 3D BAG, so the buildings are made here: outlines from
+OpenStreetMap where someone drew them and from OS OpenMap Local everywhere else, and for each outline the lidar
+surface model says how high the roof is, how much it rises from eaves to ridge and which way the ridge runs.
+A simple outline gets a gabled roof, a complex one a hipped roof, a level one a flat roof.
 
 Output (data/build/):
   buildings.bin   float32 per vertex: x, y, z, nx, ny, nz, u, v, kind, building index, atlas u, atlas v (-1: none)
-  roof_atlas.png  aerial photo crops for the roofs
+  roof_atlas.png  a placeholder: there is no open aerial photo here to take real roofs from
   buildings.json  per building: id, attributes, wall and roof colors
   footprints.json per building: footprint ring in local meters, for the ground and tree steps
 
-Local coordinates: x east, y up, z south, origin at the area center, y=0 at the building's ground level.
+Local coordinates: x east, y up (metres above Ordnance Datum), z south, origin at the area center.
 """
 
 import hashlib
 import json
-from collections import defaultdict
+from collections import Counter
 
 import mapbox_earcut as earcut
 import numpy as np
 from PIL import Image, ImageDraw
+from shapely.geometry import LineString, Polygon
+from shapely.ops import split
 
-import roof_atlas
-from aerial import load_aerial, world_to_px
-from config import BUILD, CX, CY, RAW, XMAX, XMIN, YMAX, YMIN, write_area
+from config import BUILD, CX, CY, LIDAR_RES, RAW, XMAX, XMIN, YMAX, YMIN, write_area
+from outlines import load_outlines
 
 KIND = {"GroundSurface": 0, "WallSurface": 1, "RoofSurface": 2}
 COLS = 12
 
-# Roof vertex blocks and footprints per building index, for texturing roofs from the aerial photo afterwards.
-ROOF_BLOCKS = defaultdict(list)
-FOOTPRINT = {}
-ATLAS_KINDS = {"house", "barn", "shed", "church", "school", "tank", "silo", "canopy"}
-
-# BGT structures that are often missing from the BAG: (height, type).
-EXTRAS = {
-    "opslagtank": (4.5, "tank"),
-    "voedersilo": (11.0, "silo"),
-    "schuur": (2.6, "shed"),
-    "open loods": (5.0, "shed"),
-    "overkapping": (3.0, "canopy"),
-    "lage trafo": (2.2, "shed"),
-}
+# Roofs of a Cornish village: Delabole slate above all, then grey concrete tile, a little red clay, and fibre
+# cement or tin sheet on the farm buildings. (colour, weight)
+ROOFS_HOUSE = [((66, 68, 74), 5), ((88, 90, 96), 4), ((44, 48, 56), 2), ((120, 122, 124), 2), ((120, 92, 70), 1.5), ((140, 64, 50), 0.6), ((108, 56, 46), 0.6)]
+ROOFS_BARN = [((150, 150, 146), 3), ((120, 122, 124), 3), ((98, 114, 98), 2), ((88, 90, 96), 2), ((120, 92, 70), 1)]
 
 
 def ring_area(xy):
@@ -135,16 +131,20 @@ def emit(verts, surfaces, bi, ground, center_u=False):
             uv = np.stack([u, tris[..., 2] - ground], axis=-1)
         else:
             uv = tris[..., :2] - [CX, CY]
-        local = np.stack([tris[..., 0] - CX, tris[..., 2] - ground, CY - tris[..., 1]], axis=-1)
-        normal = [n[0], n[2], -n[1]]
+        local = np.stack([tris[..., 0] - CX, tris[..., 2], CY - tris[..., 1]], axis=-1)
+        normal = np.broadcast_to([n[0], n[2], -n[1]], local.shape)
+        if kind == 2:
+            # A roof surface can be folded (the hipped ring around a complex building): a normal per triangle.
+            tn = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+            tn /= np.maximum(np.linalg.norm(tn, axis=1, keepdims=True), 1e-9)
+            tn[tn[:, 2] < 0] *= -1
+            normal = np.repeat(np.stack([tn[:, 0], tn[:, 2], -tn[:, 1]], -1)[:, None, :], 3, axis=1)
         block = np.concatenate(
-            [local, np.broadcast_to(normal, local.shape), uv, np.full(local.shape[:2] + (1,), kind), np.full(local.shape[:2] + (1,), bi),
+            [local, normal, uv, np.full(local.shape[:2] + (1,), kind), np.full(local.shape[:2] + (1,), bi),
              np.full(local.shape[:2] + (2,), -1.0)],
             axis=-1,
         ).reshape(-1, COLS)
         verts.append(block)
-        if kind == 2:
-            ROOF_BLOCKS[bi].append((block, tris))
     return roof_tris
 
 
@@ -188,7 +188,7 @@ def part(meta, pid, kind, axis, height, wall, roof, param=0.0):
 
 
 def add_landmark_parts(verts, meta, pid, lm, ground, axis, roof_tris):
-    """Towers, roof turrets and crosses that 3D BAG smooths away."""
+    """Towers, spires, roof turrets, crosses and chimney stacks that the lidar roof fit smooths away."""
     wall, roof = lm.get("wall", (150, 80, 62)), lm.get("roof", (70, 72, 80))
     if "tower" in lm:
         t = lm["tower"]
@@ -207,6 +207,12 @@ def add_landmark_parts(verts, meta, pid, lm, ground, axis, roof_tris):
         bi = part(meta, pid, "turret", axis, t["top"], (240, 238, 230), (62, 64, 72), param=t["body"])
         emit(verts, extrude([ring], ground + t["base"], ground + t["body"]), bi, ground, center_u=True)
         emit(verts, pyramid(ring, ground + t["body"], ground + t["top"]), bi, ground)
+    for t in lm.get("stacks", []):
+        # A mine chimney: a round, tapering stack of stone with a brick top.
+        n = 10
+        bi = part(meta, pid, "stack", 0.0, t["height"], t.get("wall", (150, 138, 122)), (96, 60, 48), param=t["height"])
+        g = t.get("ground", ground)
+        emit(verts, frustum(ngon_ring(t["x"], t["y"], t["r"], n, 0.0), ngon_ring(t["x"], t["y"], t["r"] * t.get("taper", 0.62), n, 0.0), g - 0.5, g + t["height"]), bi, g, center_u=True)
     if lm.get("bell") and roof_tris:
         # A small white bell turret on the highest point of the roof, as on the school.
         pts = np.concatenate(roof_tris).reshape(-1, 3)
@@ -217,192 +223,241 @@ def add_landmark_parts(verts, meta, pid, lm, ground, axis, roof_tris):
         emit(verts, pyramid(ring, zmax + 2.0, zmax + 3.4), bi, ground)
 
 
-def add_masts(verts, meta, masts):
+def add_masts(verts, meta, masts, dtm):
     for m in masts:
+        g = ground_at(dtm, m["x"], m["y"])
         bot = rect_ring(m["x"], m["y"], m["base"], m["base"], 0.3)
         top = rect_ring(m["x"], m["y"], m["tip"], m["tip"], 0.3)
         bi = part(meta, "mast", "mast", 0.3, m["height"], (184, 188, 192), (150, 154, 158), param=m["height"])
-        emit(verts, frustum(bot, top, 0.0, m["height"]), bi, 0.0, center_u=True)
+        emit(verts, frustum(bot, top, g - 0.5, g + m["height"]), bi, g, center_u=True)
 
 
-def greenhouse_height(year):
-    # Older Venlo greenhouses are lower; modern ones have a 5-6 m gutter.
-    return 3.6 if (year or 0) < 1985 else 5.2
+def ground_at(dtm, x, y):
+    row = int(np.clip((YMAX - y) / LIDAR_RES, 0, dtm.shape[0] - 1))
+    col = int(np.clip((x - XMIN) / LIDAR_RES, 0, dtm.shape[1] - 1))
+    return float(dtm[row, col])
+
+
+def pick(options, r):
+    total = sum(w for _, w in options)
+    t = r * total
+    for c, w in options:
+        t -= w
+        if t <= 0:
+            return c
+    return options[0][0]
+
+
+def measure(poly, dtm, dsm):
+    """What the lidar says about a building: floor level, lowest ground, ridge height, rise of the roof and the
+    direction of the ridge (radians, grid x/y), or None for the ridge when the roof is flat or too small to tell."""
+    x0, y0, x1, y1 = poly.bounds
+    c0, c1 = int((x0 - XMIN) / LIDAR_RES) - 1, int((x1 - XMIN) / LIDAR_RES) + 2
+    r0, r1 = int((YMAX - y1) / LIDAR_RES) - 1, int((YMAX - y0) / LIDAR_RES) + 2
+    c0, r0, c1, r1 = max(c0, 0), max(r0, 0), min(c1, dtm.shape[1]), min(r1, dtm.shape[0])
+    if c1 - c0 < 2 or r1 - r0 < 2:
+        return None
+    px = lambda ring: [((x - XMIN) / LIDAR_RES - c0, (YMAX - y) / LIDAR_RES - r0) for x, y in ring.coords]
+    mask = Image.new("L", (c1 - c0, r1 - r0), 0)
+    ImageDraw.Draw(mask).polygon(px(poly.exterior), fill=1)
+    inner = np.array(mask) > 0
+    core = inner.copy()
+    core[1:, :] &= inner[:-1, :]
+    core[:-1, :] &= inner[1:, :]
+    core[:, 1:] &= inner[:, :-1]
+    core[:, :-1] &= inner[:, 1:]
+    use = core if core.sum() >= 12 else inner
+    g = dtm[r0:r1, c0:c1]
+    ring = Image.new("L", (c1 - c0, r1 - r0), 0)
+    ImageDraw.Draw(ring).line(px(poly.exterior), fill=1, width=3)
+    around = (np.array(ring) > 0) | inner
+    floor, low = float(np.median(g[around])), float(g[around].min())
+    if use.sum() < 4:
+        return {"floor": floor, "low": low, "ridge": 3.0, "rise": 0.0, "axis": None, "cells": 0}
+    rel = dsm[r0:r1, c0:c1][use] - floor
+    ridge = float(np.percentile(rel, 93))
+    spread = ridge - float(np.percentile(rel, 40))
+    rows, cols = np.nonzero(use)
+    xs, ys = XMIN + (c0 + cols + 0.5) * LIDAR_RES, YMAX - (r0 + rows + 0.5) * LIDAR_RES
+    # Which way does the ridge run? Along the long side or across: the one where height falls off with the distance
+    # from the middle line.
+    rect = poly.minimum_rotated_rectangle
+    rc = np.array(rect.exterior.coords)[:4]
+    e1, e2 = rc[1] - rc[0], rc[2] - rc[1]
+    long_e, short_e = (e1, e2) if np.hypot(*e1) >= np.hypot(*e2) else (e2, e1)
+    center = rc.mean(0)
+    best, axis = -2.0, None
+    for along, across in ((long_e, short_e), (short_e, long_e)):
+        width = np.hypot(*across)
+        if width < 3.0:
+            continue
+        nrm = across / width
+        d = np.abs((xs - center[0]) * nrm[0] + (ys - center[1]) * nrm[1])
+        if d.std() < 0.3 or rel.std() < 0.15:
+            continue
+        corr = float(np.corrcoef(-d, rel)[0, 1])
+        # The long side wins unless the short one is clearly better: most roofs run the long way.
+        score = corr + (0.15 if along is long_e else 0.0)
+        if score > best:
+            best, axis = score, float(np.arctan2(along[1], along[0]))
+    rise = float(np.clip(spread / 0.52, 0.0, max(ridge - 2.0, 0.0)))
+    if rise < 0.7 or best < 0.25:
+        rise, axis = (0.0, None) if rise < 0.7 else (rise, float(np.arctan2(long_e[1], long_e[0])))
+    return {"floor": floor, "low": low, "ridge": ridge, "rise": rise, "axis": axis, "cells": int(use.sum()),
+            "fill": poly.area / max(rect.area, 1e-6), "short": float(np.hypot(*short_e)), "long": float(np.hypot(*long_e))}
+
+
+def open_ring(ring):
+    r = np.asarray(ring.coords if hasattr(ring, "coords") else ring, dtype=np.float64)[:, :2]
+    return r[:-1] if np.allclose(r[0], r[-1]) else r
+
+
+def flat_roof(poly, base, top):
+    return extrude([open_ring(poly.exterior), *[open_ring(h) for h in poly.interiors]], base, top)
+
+
+def gabled(poly, base, eave, ridge, axis):
+    """Walls and two roof planes for a simple outline: the ridge runs through the middle along `axis`, the walls
+    under it rise to a gable. Returns None when the outline does not split cleanly in two."""
+    ring = ccw(open_ring(poly.exterior))
+    c = np.array(poly.minimum_rotated_rectangle.centroid.coords[0])
+    d = np.array([np.cos(axis), np.sin(axis)])
+    nrm = np.array([-d[1], d[0]])
+    across = (ring - c) @ nrm
+    hw = float(np.abs(across).max())
+    if hw < 1.0:
+        return None
+    reach = float(np.abs((ring - c) @ d).max()) + 5
+    halves = split(Polygon(ring), LineString([c - d * reach, c + d * reach]))
+    parts = [g for g in halves.geoms if g.geom_type == "Polygon" and g.area > 0.5]
+    if len(parts) < 2:
+        return None
+    height = lambda pts: eave + (ridge - eave) * (1 - np.clip(np.abs((pts - c) @ nrm) / hw, 0, 1))
+    out = []
+    for g in parts:
+        r = ccw(open_ring(g.exterior))
+        z = height(r)
+        out.append((2, [np.column_stack([r, z])]))
+        for (a, za), (b, zb) in zip(zip(r, z), zip(np.roll(r, -1, axis=0), np.roll(z, -1))):
+            on_ridge = abs((a - c) @ nrm) < 1e-6 and abs((b - c) @ nrm) < 1e-6
+            if on_ridge or np.linalg.norm(b - a) < 0.05:
+                continue
+            out.append((1, [np.array([[a[0], a[1], base], [b[0], b[1], base], [b[0], b[1], zb], [a[0], a[1], za]])]))
+    return out
+
+
+def hipped(poly, base, eave, ridge):
+    """Walls to the eaves, then the roof rises inward from every side to a level top: right for an L, a T or a
+    courtyard block, where no single ridge fits."""
+    outer = Polygon(ccw(open_ring(poly.exterior)))
+    lo, hi = 0.0, 12.0
+    for _ in range(12):  # how far in the outline can shrink before nothing is left
+        mid = (lo + hi) / 2
+        if outer.buffer(-mid, join_style="mitre").is_empty:
+            hi = mid
+        else:
+            lo = mid
+    inner = outer.buffer(-0.72 * lo, join_style="mitre").simplify(0.1)
+    tops = [g for g in getattr(inner, "geoms", [inner]) if g.geom_type == "Polygon" and g.area > 0.3]
+    if lo < 1.0 or not tops:
+        return None
+    ring = open_ring(outer.exterior)
+    out = [s for s in extrude([ring], base, eave) if s[0] == 1]
+    lift = lambda r, z: np.column_stack([r, np.full(len(r), z)])
+    out.append((2, [lift(ring, eave), *[lift(open_ring(t.exterior)[::-1], ridge) for t in tops]]))
+    for t in tops:
+        out.append((2, [lift(ccw(open_ring(t.exterior)), ridge)]))
+    return out
 
 
 def main():
     write_area()
-    aerial = load_aerial()
+    dtm, dsm = np.load(BUILD / "dtm.npy"), np.load(BUILD / "dsm.npy")
+    sea = np.load(BUILD / "sea.npy")
     landmarks = json.loads((BUILD / "landmarks.json").read_text()) if (BUILD / "landmarks.json").exists() else {}
     named = landmarks.get("buildings", {})
-    verts = []
-    meta = []
-    footprints = []
-    for line in open(RAW / "3dbag.jsonl"):
-        feat = json.loads(line)
-        t = feat["transform"]
-        V = np.array(feat["vertices"], dtype=np.float64) * t["scale"] + t["translate"]
-        parent_id = feat["id"]
-        parent = feat["CityObjects"][parent_id]
-        attrs = parent["attributes"]
-        if attrs.get("status") not in ("Pand in gebruik", "Pand in gebruik (niet ingemeten)", "Verbouwing pand"):
+    verts, meta, footprints = [], [], []
+    shapes = Counter()
+    for pid, poly, tags in load_outlines():
+        m = measure(poly, dtm, dsm)
+        if m is None or sea[int(np.clip((YMAX - poly.centroid.y) / LIDAR_RES, 0, sea.shape[0] - 1)), int(np.clip((poly.centroid.x - XMIN) / LIDAR_RES, 0, sea.shape[1] - 1))]:
             continue
-        ground = attrs.get("b3_h_maaiveld") or 0.0
-        lod0 = parent["geometry"][0]["boundaries"][0][0]
-        fp = V[lod0][:, :2]
-        footprints.append([[round(x - CX, 2), round(CY - y, 2)] for x, y in fp])
-
-        geom = None
-        for child_id in parent.get("children", []):
-            for g in feat["CityObjects"][child_id].get("geometry", []):
-                if g["lod"] == "2.2":
-                    geom = g
-        bi = len(meta)
-        FOOTPRINT[bi] = fp
-        kas = bool(attrs.get("b3_kas_warenhuis"))
-        height = (attrs.get("b3_h_dak_max") or ground) - ground
+        lm = named.get(pid)
+        ring = open_ring(poly.exterior)
+        floor, base = m["floor"], m["low"] - 0.4
+        height = float(np.clip(m["ridge"], 2.4, 40.0))
+        if m["ridge"] < 1.5:
+            # Nothing stands here in the lidar: demolished, not yet built when the survey flew, or a roofless ruin.
+            if not lm and not tags.get("name"):
+                continue
+            height = 3.0
+        rise = min(m["rise"], height - 2.0)
+        # A tree that hangs over a roof reads as a roof 15 m high. Few roofs here are steeper than 40 degrees, and an
+        # ordinary house has walls of two storeys, a large building of three.
+        rise = min(rise, 0.5 * m.get("short", 8.0) * 0.85, 5.0)
+        walls = 6.5 if poly.area < 180 else 8.5
+        church = tags.get("building") in ("church", "chapel") or tags.get("amenity") == "place_of_worship"
+        if height - rise > walls and not (tags.get("building:levels") or church or lm):
+            height = walls + rise
         kind = "house"
-        if kas or geom is None or height < 1.0:
-            # 3D BAG cannot reconstruct glass roofs (lidar passes through), so build those ourselves.
-            kind = "greenhouse" if kas else "shed"
-            height = greenhouse_height(attrs.get("oorspronkelijkbouwjaar")) if kas else 3.0
-            rings = [V[r][:, :2] for r in parent["geometry"][0]["boundaries"][0]]
-            roof_tris = emit(verts, extrude(rings, ground, ground + height), bi, ground)
-        else:
-            surfaces = geom["semantics"]["surfaces"]
-            values = geom["semantics"]["values"]
-            items = []
-            for shell, shell_vals in zip(geom["boundaries"], values):
-                for surf, sv in zip(shell, shell_vals):
-                    k = KIND.get(surfaces[sv]["type"], 1) if sv is not None else 1
-                    items.append((k, [V[r] for r in surf]))
-            roof_tris = emit(verts, items, bi, ground)
-            area = attrs.get("b3_opp_grond") or 0
-            if area > 250 and height < 10:
-                kind = "barn"
-        lm = named.get(parent_id)
+        if poly.area > 260 and height < 9.5:
+            kind = "barn"
+        elif poly.area < 22 or height < 3.0:
+            kind = "shed"
+        if tags.get("building") in ("church", "chapel") or tags.get("amenity") == "place_of_worship":
+            kind = "church"
         if lm:
             kind = lm["style"]
-        roof_color = sample_roof(aerial, roof_tris)
-        meta.append(
-            {
-                "id": parent_id,
-                "kind": kind,
-                "axis": round(long_axis(fp), 4),
-                "glass": bool(attrs.get("b3_is_glas_dak")),
-                "year": attrs.get("oorspronkelijkbouwjaar"),
-                "floors": attrs.get("b3_bouwlagen"),
-                "roof": attrs.get("b3_dak_type"),
-                "area": attrs.get("b3_opp_grond"),
-                "height": round(height, 2),
-                "roof_rgb": roof_color,
-                "rand": round(stable_rand(parent_id), 4),
-            }
-        )
+        if lm and lm.get("height"):
+            height, rise = lm["height"], min(rise, lm["height"] - 2.0)
+        if lm and lm.get("roofless"):
+            rise = 0.0
+        bi = len(meta)
+        surfaces = None
+        simple = m.get("fill", 0) > 0.78 and not poly.interiors
+        if rise >= 0.7 and m["axis"] is not None and simple:
+            surfaces = gabled(poly, base, floor + height - rise, floor + height, m["axis"])
+            shape_name = "gabled"
+        if surfaces is None and rise >= 0.7:
+            surfaces = hipped(poly, base, floor + height - rise, floor + height)
+            shape_name = "hipped"
+        if surfaces is None:
+            surfaces = flat_roof(poly, base, floor + height)
+            shape_name = "flat"
+        shapes[shape_name] += 1
+        roof_tris = emit(verts, surfaces, bi, floor)
+        footprints.append([[round(x - CX, 2), round(CY - y, 2)] for x, y in ring])
+        rand = stable_rand(pid)
+        meta.append({
+            "id": pid,
+            "kind": kind,
+            "axis": round(m["axis"] if m["axis"] is not None else long_axis(ring), 4),
+            "glass": False,
+            "year": None,
+            "roof": shape_name,
+            "area": round(poly.area, 1),
+            "height": round(height, 2),
+            "ground": round(floor, 2),
+            "roof_rgb": None,
+            "roof_fixed": list(pick(ROOFS_BARN if kind in ("barn", "shed") else ROOFS_HOUSE, stable_rand(pid, "roof"))),
+            "rand": round(rand, 4),
+        })
         if lm:
-            meta[-1].update({"name": lm["name"], "wall_fixed": lm.get("wall"), "roof_fixed": lm.get("roof"), "frame_fixed": lm.get("frame")})
-            add_landmark_parts(verts, meta, parent_id, lm, ground, long_axis(fp), roof_tris)
-    add_extras(verts, meta, footprints, aerial)
-    add_masts(verts, meta, landmarks.get("masts", []))
-    texture_roofs(aerial, meta)
+            meta[-1].update({"name": lm["name"], "wall_fixed": lm.get("wall"), "frame_fixed": lm.get("frame")})
+            if lm.get("roof"):
+                meta[-1]["roof_fixed"] = lm["roof"]
+            add_landmark_parts(verts, meta, pid, lm, floor, meta[-1]["axis"], roof_tris)
+    # Structures with no outline on any map (a lone mine stack): built from scripts/landmarks.py alone.
+    for extra in landmarks.get("structures", []):
+        g = ground_at(dtm, extra["x"], extra["y"])
+        add_landmark_parts(verts, meta, extra["id"], {**extra, "ground": g}, g, 0.0, [])
+    add_masts(verts, meta, landmarks.get("masts", []), dtm)
     arr = np.concatenate(verts).astype(np.float32)
     arr.tofile(BUILD / "buildings.bin")
     (BUILD / "buildings.json").write_text(json.dumps(meta))
     (BUILD / "footprints.json").write_text(json.dumps(footprints))
-    from collections import Counter
-
-    print(f"{len(meta)} buildings, {len(arr) // 3} triangles, {Counter(m['kind'] for m in meta)}")
-
-
-def texture_roofs(aerial, meta):
-    roofs = [
-        (bi, FOOTPRINT[bi], [t for _, t in ROOF_BLOCKS[bi]])
-        for bi in ROOF_BLOCKS
-        if bi in FOOTPRINT and meta[bi]["kind"] in ATLAS_KINDS
-    ]
-    fixed = {bi: meta[bi]["roof_fixed"] for bi, _, _ in roofs if meta[bi].get("roof_fixed")}
-    rects, size = roof_atlas.build(aerial, roofs, fixed)
-    for bi, rect in rects.items():
-        for block, _ in ROOF_BLOCKS[bi]:
-            u, v = roof_atlas.atlas_uv(np.column_stack([block[:, 0] + CX, CY - block[:, 2]]), rect, size)
-            block[:, 10], block[:, 11] = u, v
-        meta[bi]["atlas"] = True
-    shifts = [np.hypot(*r[0]) for r in rects.values()]
-    print(f"roof atlas {size[0]}x{size[1]} for {len(rects)} buildings, mean photo shift {np.mean(shifts):.2f} m")
-
-
-def add_extras(verts, meta, footprints, aerial):
-    """Tanks, silos and sheds from the BGT that do not overlap a BAG building."""
-    w, h = int(XMAX - XMIN), int(YMAX - YMIN)
-    ox, oz = CX - XMIN, YMAX - CY  # local (x, z) to mask column and row, at 1 m per pixel
-    taken = Image.new("1", (w, h), 0)
-    d = ImageDraw.Draw(taken)
-    for ring in footprints:
-        d.polygon([(x + ox, z + oz) for x, z in ring], fill=1)
-    taken = np.array(taken)
-    feats = json.load(open(RAW / "bgt_overigbouwwerk.geojson"))["features"]
-    for f in feats:
-        p = f["properties"]
-        key = p.get("plus_type") if p.get("type") == "niet-bgt" else p.get("type")
-        if key not in EXTRAS or f["geometry"] is None or f["geometry"]["type"] != "Polygon":
-            continue
-        rings = [np.array(r)[:, :2] for r in f["geometry"]["coordinates"]]
-        c = rings[0].mean(0)
-        cx, cz = int(c[0] - CX + ox), int(CY - c[1] + oz)
-        if 0 <= cx < w and 0 <= cz < h and taken[cz, cx]:
-            continue
-        height, kind = EXTRAS[key]
-        bi = len(meta)
-        FOOTPRINT[bi] = rings[0]
-        roof_tris = emit(verts, extrude(rings, 0.0, height), bi, 0.0)
-        footprints.append([[round(x - CX, 2), round(CY - y, 2)] for x, y in rings[0]])
-        meta.append(
-            {
-                "id": p.get("lokaal_id"),
-                "kind": kind,
-                "axis": round(long_axis(rings[0]), 4),
-                "glass": False,
-                "year": None,
-                "floors": None,
-                "roof": "flat",
-                "area": None,
-                "height": height,
-                "roof_rgb": sample_roof(aerial, roof_tris),
-                "rand": round(stable_rand(str(p.get("lokaal_id"))), 4),
-            }
-        )
-
-
-def sample_roof(aerial, roof_tris):
-    """Median aerial color over the roof, shrunk a little to stay off the ground around it."""
-    if not roof_tris:
-        return None
-    tris = np.concatenate(roof_tris)[..., :2]
-    px = world_to_px(tris.reshape(-1, 2)).reshape(-1, 3, 2)
-    x0, y0 = np.floor(px.min(axis=(0, 1))).astype(int) - 1
-    x1, y1 = np.ceil(px.max(axis=(0, 1))).astype(int) + 2
-    h, w = aerial.shape[:2]
-    if x1 <= 0 or y1 <= 0 or x0 >= w or y0 >= h:
-        return None
-    x0, y0 = max(x0, 0), max(y0, 0)
-    x1, y1 = min(x1, w), min(y1, h)
-    mask = Image.new("L", (x1 - x0, y1 - y0), 0)
-    d = ImageDraw.Draw(mask)
-    for t in px:
-        d.polygon([(float(x - x0), float(y - y0)) for x, y in t], fill=255)
-    m = np.array(mask) > 0
-    # Erode by ~0.75 m so lean and misalignment in the photo pull in less of the surroundings.
-    for _ in range(3):
-        m[1:, :] &= m[:-1, :]
-        m[:-1, :] &= m[1:, :]
-        m[:, 1:] &= m[:, :-1]
-        m[:, :-1] &= m[:, 1:]
-    crop = aerial[y0:y1, x0:x1][m]
-    if len(crop) < 8:
-        crop = aerial[y0:y1, x0:x1][np.array(mask) > 0]
-    if len(crop) == 0:
-        return None
-    return [int(v) for v in np.median(crop, axis=0)]
+    Image.new("RGB", (4, 4), (88, 90, 96)).save(BUILD / "roof_atlas.png")
+    print(f"{len(meta)} buildings, {len(arr) // 3} triangles, {dict(Counter(m['kind'] for m in meta))}, roofs {dict(shapes)}")
 
 
 if __name__ == "__main__":

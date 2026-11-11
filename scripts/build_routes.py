@@ -1,4 +1,4 @@
-"""Walking routes for the viewer: the junction network (wandelknooppunten) and long-distance paths from OpenStreetMap.
+"""Walking routes for the viewer: the South West Coast Path and other waymarked routes from OpenStreetMap.
 
 Lines are in local meters on the ground (x east, z south from the center of the area), which the viewer projects for
 the view it shows. Output: data/build/routes.json
@@ -7,11 +7,11 @@ the view it shows. Output: data/build/routes.json
 import json
 
 from config import BUILD, CX, CY, RAW, XMAX, XMIN, YMAX, YMIN
-from geo import wgs_to_rd
+from geo import wgs_to_grid
 
 
 def ground(lat, lon):
-    x, y = wgs_to_rd(lat, lon)
+    x, y = wgs_to_grid(lat, lon)
     return [round(x - CX, 1), round(CY - y, 1)], XMIN <= x <= XMAX and YMIN <= y <= YMAX
 
 
@@ -31,7 +31,7 @@ def main():
                         lines.append([p for p, _ in pts])
                 if lines:
                     network = t.get("network", "")
-                    name = t.get("name") or (f"Knooppunt {t['ref'].replace('-', ' naar ')}" if t.get("ref") else "Wandelroute")
+                    name = t.get("name") or t.get("ref") or "Walking route"
                     routes.append({"name": name, "kind": "long" if network in ("nwn", "iwn") else "junction", "ref": t.get("ref"), "lines": lines})
             elif el["type"] == "node" and t.get("rwn_ref"):
                 p, inside = ground(el["lat"], el["lon"])

@@ -1,6 +1,5 @@
 """Hover areas for the viewer: the outline on screen of every named building, and a small disc for named points.
-Each carries what the viewer's info card shows when it is clicked: kind, story, address, links, a photo, and the
-title of a tour stop about the same place (scripts/build_history.py).
+Each carries what the viewer's info card shows when it is clicked: kind, story, address, links and a photo.
 
 Polygons are in the render's screen meters (u right, v up from the image center line), one per view in config.VIEWS;
 the viewer turns them into image pixels with map.json. Output: data/build/hotspots.json
@@ -10,15 +9,19 @@ import hashlib
 import json
 import math
 import subprocess
+import time
 import urllib.parse
+import urllib.error
+import urllib.request
 
 import numpy as np
 
-from build_history import commons_thumb, download
-from config import BUILD, CX, CY, VIEWS
+from config import BUILD, CX, CY, LIDAR_RES, VIEWS, XMIN, YMAX
 from geo import screen as project
 
 PHOTOS = BUILD / "photos"
+VILLAGE = (172030, 50730)  # Churchtown, by the church: where a walk past a series of places starts
+UA = {"User-Agent": "isometric-village-map/0.1"}
 
 
 def screen(x, y, z, look):
@@ -45,6 +48,7 @@ def hull(pts):
 
 def main():
     lm = json.loads((BUILD / "landmarks.json").read_text())
+    dtm = np.load(BUILD / "dtm.npy")
     meta = json.loads((BUILD / "buildings.json").read_text())
     v = np.fromfile(BUILD / "buildings.bin", dtype=np.float32).reshape(-1, 12)
     parts = {}
@@ -58,10 +62,12 @@ def main():
                 continue
             pts = [screen(v[sel, 0], v[sel, 1], v[sel, 2], look) for look in VIEWS]
         else:
+            # A disc on the ground, at the height of the land there.
             a = np.linspace(0, 2 * np.pi, 16, endpoint=False)
-            x, z = h["x"] - CX + 5 * np.cos(a), CY - h["y"] + 5 * np.sin(a)
-            pts = [np.concatenate([screen(x, 0 * x, z, look), screen(x, 0 * x + 3, z, look)]) for look in VIEWS]
-        spot = {k: h[k] for k in ("name", "note", "kind", "text", "address", "web", "more", "stop") if h.get(k)}
+            x, z = h["x"] - CX + 6 * np.cos(a), CY - h["y"] + 6 * np.sin(a)
+            g = dtm[np.clip((YMAX - (CY - z)) / LIDAR_RES, 0, dtm.shape[0] - 1).astype(int), np.clip((x + CX - XMIN) / LIDAR_RES, 0, dtm.shape[1] - 1).astype(int)]
+            pts = [np.concatenate([screen(x, g, z, look), screen(x, g + 3, z, look)]) for look in VIEWS]
+        spot = {k: h[k] for k in ("name", "note", "kind", "text", "address", "web", "more") if h.get(k)}
         spot["x"], spot["y"] = round(h["x"], 1), round(h["y"], 1)
         spot["poly"] = [[[round(float(p[0]), 2), round(float(p[1]), 2)] for p in hull(view)] for view in pts]
         if "photo" in h:
@@ -70,10 +76,10 @@ def main():
     cats = [{"key": c["key"], "label": c["label"], "spots": walk([n for n, s in enumerate(out) if s["name"] in c["names"]], out)}
             for c in lm["categories"]]
     (BUILD / "hotspots.json").write_text(json.dumps({"views": list(VIEWS), "categories": cats, "spots": out}, ensure_ascii=False))
-    print(f"{len(out)} hotspots, {sum('text' in s or 'stop' in s for s in out)} with a story, {len(cats)} categories")
+    print(f"{len(out)} hotspots, {sum('text' in s for s in out)} with a story, {len(cats)} categories")
 
 
-def walk(idx, spots, start=(191850, 377850)):
+def walk(idx, spots, start=VILLAGE):
     """Order a category as a walk: the place nearest the village first, then each time the nearest next one."""
     pos = lambda i: (spots[i]["x"], spots[i]["y"])
     dist = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])
@@ -94,6 +100,26 @@ def photo(name, credit):
         dst.write_bytes(download(commons_thumb(name)))
         subprocess.run(["magick", str(dst), "-resize", "640x640>", "-quality", "82", str(dst)], check=True)
     return {"src": f"photos/{dst.name}", "credit": credit, "url": f"https://commons.wikimedia.org/wiki/File:{urllib.parse.quote(name)}"}
+
+
+def commons_thumb(name, width=960):  # Wikimedia only serves a fixed set of thumbnail widths
+    h = hashlib.md5(name.encode()).hexdigest()
+    q = urllib.parse.quote(name)
+    return f"https://upload.wikimedia.org/wikipedia/commons/thumb/{h[0]}/{h[:2]}/{q}/{width}px-{q}"
+
+
+def download(url, tries=6):
+    """Wikimedia rate-limits bursts of thumbnail requests; wait politely and retry."""
+    req = urllib.request.Request(url, headers=UA)
+    for attempt in range(tries):
+        try:
+            data = urllib.request.urlopen(req, timeout=60).read()
+            time.sleep(3)
+            return data
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == tries - 1:
+                raise
+            time.sleep(15 * (attempt + 1))
 
 
 if __name__ == "__main__":
