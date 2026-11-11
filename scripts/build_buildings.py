@@ -271,9 +271,18 @@ def measure(poly, dtm, dsm):
     ring = Image.new("L", (c1 - c0, r1 - r0), 0)
     ImageDraw.Draw(ring).line(px(poly.exterior), fill=1, width=3)
     around = (np.array(ring) > 0) | inner
-    floor, low = float(np.median(g[around])), float(g[around].min())
+    # The lowest ground the walls must reach: not one stray deep cell (a culvert, a shaft, a lidar fault), which
+    # would hang a wall of 20 m under one corner.
+    floor, low = float(np.median(g[around])), float(np.percentile(g[around], 4))
+    # The ground under the building as a tilted plane (height = floor + tilt . (x - cx, y - cy)), for a building
+    # that stands on a slope.
+    rr, cc = np.nonzero(around)
+    gx, gy = XMIN + (c0 + cc + 0.5) * LIDAR_RES, YMAX - (r0 + rr + 0.5) * LIDAR_RES
+    cx, cy = poly.centroid.x, poly.centroid.y
+    coef, *_ = np.linalg.lstsq(np.column_stack([gx - cx, gy - cy, np.ones(len(gx))]), g[around], rcond=None)
+    slope = {"tilt": (float(coef[0]), float(coef[1])), "center": (cx, cy), "drop": float(g[around].max()) - low}
     if use.sum() < 4:
-        return {"floor": floor, "low": low, "ridge": 3.0, "rise": 0.0, "axis": None, "cells": 0}
+        return {"floor": floor, "low": low, "ridge": 3.0, "rise": 0.0, "axis": None, "cells": 0, **slope}
     rel = dsm[r0:r1, c0:c1][use] - floor
     ridge = float(np.percentile(rel, 93))
     spread = ridge - float(np.percentile(rel, 40))
@@ -303,8 +312,50 @@ def measure(poly, dtm, dsm):
     rise = float(np.clip(spread / 0.52, 0.0, max(ridge - 2.0, 0.0)))
     if rise < 0.7 or best < 0.25:
         rise, axis = (0.0, None) if rise < 0.7 else (rise, float(np.arctan2(long_e[1], long_e[0])))
-    return {"floor": floor, "low": low, "ridge": ridge, "rise": rise, "axis": axis, "cells": int(use.sum()),
+    return {**slope, "floor": floor, "low": low, "ridge": ridge, "rise": rise, "axis": axis, "cells": int(use.sum()),
             "fill": poly.area / max(rect.area, 1e-6), "short": float(np.hypot(*short_e)), "long": float(np.hypot(*long_e))}
+
+
+def steps(poly, dtm):
+    """A long, simple building on a slope is a terrace that steps down the hill, like Stippy Stappy on Town Hill:
+    the map draws the whole row as one outline. Cut it across into houses, so each gets its own floor level."""
+    rect = poly.minimum_rotated_rectangle
+    rc = np.array(rect.exterior.coords)[:4]
+    e1, e2 = rc[1] - rc[0], rc[2] - rc[1]
+    origin, long_e, short_e = (rc[0], e1, e2) if np.hypot(*e1) >= np.hypot(*e2) else (rc[1], e2, -e1)
+    length = float(np.hypot(*long_e))
+    if length < 13 or poly.area / max(rect.area, 1e-6) < 0.78 or poly.interiors:
+        return [poly]
+    ends = [ground_at(dtm, *(origin + short_e / 2 + long_e * t)) for t in (0.05, 0.95)]
+    if abs(ends[0] - ends[1]) < 2.0:
+        return [poly]
+    n = max(2, round(length / 6.5))
+    out = []
+    for k in range(n):
+        a, b = origin + long_e * (k / n), origin + long_e * ((k + 1) / n)
+        strip = Polygon([a - short_e * 0.1, b - short_e * 0.1, b + short_e * 1.1, a + short_e * 1.1])
+        piece = poly.intersection(strip)
+        out += [q for q in getattr(piece, "geoms", [piece]) if q.geom_type == "Polygon" and q.area > 6]
+    return out or [poly]
+
+
+def lean(surfaces, m, base):
+    """A building on a slope that is no terrace: tilt it with the ground, so the uphill end does not sink into the
+    hill and the downhill end does not stand on stilts. The walls stay upright; eaves and ridge follow the slope."""
+    (tx, ty), (cx, cy) = m["tilt"], m["center"]
+    # Only so far: a large building on a steep site has a level floor cut into the hill. At most 8 m from end to end.
+    k = min(1.0, 8.0 / max(np.hypot(tx, ty) * m.get("long", 10.0), 1e-6))
+    tx, ty = tx * k, ty * k
+    out = []
+    for kind, rings in surfaces:
+        new = []
+        for r in rings:
+            r = np.array(r, dtype=np.float64)
+            up = r[:, 2] > base + 0.01
+            r[up, 2] += tx * (r[up, 0] - cx) + ty * (r[up, 1] - cy)
+            new.append(r)
+        out.append((kind, new))
+    return out
 
 
 def open_ring(ring):
@@ -347,8 +398,10 @@ def gabled(poly, base, eave, ridge, axis):
 
 
 def hipped(poly, base, eave, ridge):
-    """Walls to the eaves, then the roof rises inward from every side to a level top: right for an L, a T or a
-    courtyard block, where no single ridge fits."""
+    """Walls to the eaves, then the roof rises inward from every side: right for an L, a T or a courtyard block,
+    where no single ridge fits. The roof is built in bands, like contour lines: the outline shrunk a metre or so at a
+    time, each band a little higher than the last. A narrow wing runs out of bands early and gets a lower ridge of
+    its own; the widest part goes on up to a level top."""
     outer = Polygon(ccw(open_ring(poly.exterior)))
     lo, hi = 0.0, 12.0
     for _ in range(12):  # how far in the outline can shrink before nothing is left
@@ -357,16 +410,24 @@ def hipped(poly, base, eave, ridge):
             hi = mid
         else:
             lo = mid
-    inner = outer.buffer(-0.72 * lo, join_style="mitre").simplify(0.1)
-    tops = [g for g in getattr(inner, "geoms", [inner]) if g.geom_type == "Polygon" and g.area > 0.3]
-    if lo < 1.0 or not tops:
+    if lo < 1.0:
         return None
-    ring = open_ring(outer.exterior)
-    out = [s for s in extrude([ring], base, eave) if s[0] == 1]
+    parts = lambda g: [q for q in getattr(g, "geoms", [g]) if q.geom_type == "Polygon" and q.area > 0.3]
     lift = lambda r, z: np.column_stack([r, np.full(len(r), z)])
-    out.append((2, [lift(ring, eave), *[lift(open_ring(t.exterior)[::-1], ridge) for t in tops]]))
-    for t in tops:
-        out.append((2, [lift(ccw(open_ring(t.exterior)), ridge)]))
+    out = [s for s in extrude([open_ring(outer.exterior)], base, eave) if s[0] == 1]
+    n = max(2, int(np.ceil(0.72 * lo / 1.2)))
+    prev, z_prev = [outer], eave
+    for k in range(1, n + 1):
+        z = eave + (ridge - eave) * k / n
+        cur = parts(outer.buffer(-0.72 * lo * k / n, join_style="mitre").simplify(0.1))
+        for a in prev:
+            inside = [c for c in cur if a.contains(c.representative_point())]
+            out.append((2, [lift(ccw(open_ring(a.exterior)), z_prev), *[lift(ccw(open_ring(c.exterior))[::-1], z) for c in inside]]))
+        prev, z_prev = cur, z
+        if not cur:
+            break
+    for a in prev:
+        out.append((2, [lift(ccw(open_ring(a.exterior)), z_prev)]))
     return out
 
 
@@ -378,13 +439,17 @@ def main():
     named = landmarks.get("buildings", {})
     verts, meta, footprints = [], [], []
     shapes = Counter()
+    outlines = []
     for pid, poly, tags in load_outlines():
+        pieces = [poly] if pid in named else steps(poly, dtm)
+        outlines += [(pid if k == 0 else f"{pid}-s{k}", q, tags) for k, q in enumerate(pieces)]
+    for pid, poly, tags in outlines:
         m = measure(poly, dtm, dsm)
         if m is None or sea[int(np.clip((YMAX - poly.centroid.y) / LIDAR_RES, 0, sea.shape[0] - 1)), int(np.clip((poly.centroid.x - XMIN) / LIDAR_RES, 0, sea.shape[1] - 1))]:
             continue
         lm = named.get(pid)
         ring = open_ring(poly.exterior)
-        floor, base = m["floor"], m["low"] - 0.4
+        floor, base = m["floor"], max(m["low"] - 0.4, m["floor"] - 7.0)
         height = float(np.clip(m["ridge"], 2.4, 40.0))
         if m["ridge"] < 1.5:
             # Nothing stands here in the lidar: demolished, not yet built when the survey flew, or a roofless ruin.
@@ -424,6 +489,9 @@ def main():
         if surfaces is None:
             surfaces = flat_roof(poly, base, floor + height)
             shape_name = "flat"
+        if m["drop"] > 1.5:
+            surfaces = lean(surfaces, m, base)
+            shapes["on a slope"] += 1
         shapes[shape_name] += 1
         roof_tris = emit(verts, surfaces, bi, floor)
         footprints.append([[round(x - CX, 2), round(CY - y, 2)] for x, y in ring])
