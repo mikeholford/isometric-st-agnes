@@ -18,6 +18,12 @@ It follows [Isometric Helenaveen](https://jankeesvw.github.io/isometric-helenave
 | Road names | Not shown | The name shows when the pointer is on a road (`scripts/build_roads.py`): names from OpenStreetMap, and from OS OpenMap Local where OpenStreetMap has none |
 | Turning | A button | The button, or hold Command (Ctrl on other keyboards) and drag |
 
+## Bolster the giant
+
+The giant of the St Agnes legend is always out walking somewhere on the map: on a road, a path or the sand of a beach. Everyone sees him in the same place, with no server: the day is cut into legs of twenty minutes, and the number of a leg seeds the dice that pick where he starts and every turn he takes (`bolsterLeg` in `viewer/index.html`). Click him and a card gives the time and place of the find, with a link (`#bolster=<seconds since 1970>`) that shows anyone where he stood at that minute. He is then gone for that visitor until his next leg.
+
+He is drawn from the old sources: Robert Hunt (1865) and George Cruikshank's drawing in Hunt's book give a belted tunic to the knee, bare lower legs, great hands and a knife, and no club. The beard and the leaves in his hair nod to the village's Bolster Festival. His story is on the map at the Beacon, Chapel Porth and the Bolster Bank.
+
 ## Pipeline
 
 Run `./build.sh` for everything. The steps:

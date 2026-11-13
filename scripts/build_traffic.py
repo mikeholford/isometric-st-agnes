@@ -113,6 +113,32 @@ def road_ways():
         }
 
 
+def beach_ways(ways):
+    """OpenStreetMap has no paths on the sand, but people walk there, and so does the giant. Each beach gets a walk
+    round the sand, a few metres in from its edge, joined to the nearest path."""
+    from shapely.geometry import Polygon
+
+    path = RAW / "osm_land.json"
+    nodes = [(n, pt) for w in ways if w["ww"] for n, pt in zip(w["nodes"], w["pts"])]
+    walk = CLASSES["footway"]
+    way = lambda ids, pts: {"nodes": ids, "pts": pts, "c": "footway", "v": 1.2, "w": 0, "d": 0, "wb": 0, "db": 0, "ww": walk[5], "dw": walk[6], "oneway": False}
+    for el in json.loads(path.read_text())["elements"] if path.exists() else []:
+        if el["type"] != "way" or el.get("tags", {}).get("natural") not in ("beach", "sand") or len(el.get("geometry", [])) < 4:
+            continue
+        sand = Polygon([local(g["lat"], g["lon"]) for g in el["geometry"]]).buffer(0).buffer(-7)
+        sand = max(getattr(sand, "geoms", [sand]), key=lambda q: q.area, default=None)
+        if sand is None or sand.is_empty or sand.area < 1200:
+            continue
+        ring = list(sand.exterior.simplify(2).coords)[:-1]
+        ids = [f"sand{el['id']}_{k}" for k in range(len(ring))]
+        yield way(ids + [ids[0]], ring + [ring[0]])
+        if nodes:
+            # The way down to the sand: from the nearest corner of the walk to the nearest point of a path.
+            d, k, n, pt = min((math.dist(r, pt), k, n, pt) for k, r in enumerate(ring) for n, pt in nodes)
+            if d < 120:
+                yield way([ids[k], n], [ring[k], pt])
+
+
 def stretches(ways):
     """Split the ways at junctions: nodes shared by more than one way, and the ends of every way."""
     use = Counter(n for w in ways for n in w["nodes"])
@@ -300,6 +326,7 @@ def hidden(lanes_):
 
 def main():
     ways = list(road_ways())
+    ways += list(beach_ways(ways))
     edges = list(clip(stretches(ways)))
     out = lanes(edges)
     hidden(out)

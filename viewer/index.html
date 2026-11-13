@@ -284,7 +284,8 @@
     backdrop-filter: blur(6px);
     padding: 8px 12px;
   }
-  body.tour #make, body:has(#info:not([hidden])) #make { display: none; }
+  body.tour #make, body:has(#info:not([hidden])) #make, body:has(#bolster:not([hidden])) #make { display: none; }
+  #map.over-bolster { cursor: pointer; }
   #make-dialog {
     width: min(640px, calc(100vw - 32px));
     max-height: calc(100vh - 48px);
@@ -363,6 +364,7 @@
   <div id="intro-body">
   <p>The mining village on the north coast of Cornwall in miniature, from Chapel Porth and Wheal Coates over the Beacon to Trevaunance Cove.</p>
   <p class="long">Every house, every hedge and every tree stands in its real place, and the land has its real shape, rebuilt from open maps and laser height measurements. Scroll or pinch to zoom, or look up a street or place below. Point at a road to see its name. Hold ⌘ (or Ctrl) and drag to turn the map.</p>
+  <p class="long">Bolster the giant is out walking, on a road, a path or the sand. Everyone sees him in the same place. Find him and click him.</p>
   <form id="search" role="search">
     <input id="goto" list="place-list" placeholder="Go to a street or place…" autocomplete="off" aria-label="Go to a street or place">
     <datalist id="place-list"></datalist>
@@ -445,6 +447,17 @@ Work step by step, check the licences of the data you use, and ask me about the 
     <button type="button" id="tour-prev">← Previous</button>
     <button type="button" id="tour-next">Volgende →</button>
     <button type="button" class="close" id="tour-close">Close</button>
+  </nav>
+</section>
+
+<section id="bolster" class="card" hidden aria-live="polite" aria-label="Bolster the giant">
+  <div class="card-head"><span>BOLSTER THE GIANT</span><span id="bolster-count"></span></div>
+  <h2 id="bolster-title"></h2>
+  <p id="bolster-where"></p>
+  <p id="bolster-text"></p>
+  <nav>
+    <button type="button" id="bolster-copy">Copy the link to this find</button>
+    <button type="button" class="close" id="bolster-close">Close</button>
   </nav>
 </section>
 
@@ -797,6 +810,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
     });
     viewer.addHandler('canvas-click', (e) => {
       if (!e.quick) return;
+      if (overBolster(viewer.viewport.viewportToImageCoordinates(viewer.viewport.pointFromPixel(e.position)))) return foundBolster();
+      if (!bolsterEl.hidden) closeBolster();
       // A tap on a touch screen does what hovering does with a mouse, then opens the card.
       hover(viewer.viewport.viewportToImageCoordinates(viewer.viewport.pointFromPixel(e.position)));
       if (e.pointerType !== 'mouse') tip.hidden = true;
@@ -1175,8 +1190,11 @@ Work step by step, check the licences of the data you use, and ask me about the 
         if (Math.abs(a) < area) { hit = h; area = Math.abs(a); }
       }
     }
-    // A named place wins over the road it stands on.
-    const road = p && !hit ? roadAt(p) : null;
+    // The giant wins over everything under him; a named place wins over the road it stands on.
+    const giant = !!p && overBolster(p);
+    document.getElementById('map').classList.toggle('over-bolster', giant);
+    if (giant) hit = null;
+    const road = p && !hit && !giant ? roadAt(p) : null;
     if (hit !== hovered || road !== overRoad) {
       hovered?.el.classList.remove('on');
       hit?.el.classList.add('on');
@@ -1245,6 +1263,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   function openFromHash() {
     if (!viewer || !viewer.world.getItemCount()) return;
     const h = decodeURIComponent(location.hash.slice(1));
+    if (/^bolster=/.test(h)) return void openBolsterLink();
     const tour = h.match(/^van-toen(?:-(\d+))?$/);
     if (tour) {
       if (stops.length) goStop((parseInt(tour[1] || '1') || 1) - 1);
@@ -1325,7 +1344,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     truck: { half: 7.6, sort: true, boxes: [[-7.4, 7.4, 1.2, 0.45, 1.05, 'dark'], [-7.4, 5.0, 1.25, 1.05, 3.9, 'load'], [5.3, 7.6, 1.22, 0.55, 3.15, 'cab']] },
     bike: { half: 0.9, bike: true, boxes: [[-0.85, 0.85, 0.05, 0.3, 0.75, 'dark'], [-0.32, 0.14, 0.2, 0.8, 1.42, 'body'], [-0.12, 0.08, 0.1, 1.42, 1.66, 'load']] },
   };
-  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
+  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, GIANT = 4, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
   let lanes = [], movers = [], layer = null, off = null;
   const outs = new Map(), entries = { car: {}, bike: [], walk: [] };
   let exits = new Set();
@@ -1359,6 +1378,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
       }
     });
     for (let i = 0; i < 3; i++) spawnFlock(0.2 + Math.random() * 0.6);
+    openBolsterLink();
     layerObjects();
     layer = document.createElement('canvas');
     layer.id = 'traffic-layer';
@@ -1614,6 +1634,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   function drawMover(ctx, m, x, z, dx, dz) {
     if (m.mode === WALK) return drawWalker(ctx, m, x, z, dx, dz);
     if (m.mode === SWIM) return drawDippers(ctx, m);
+    if (m.mode === GIANT) return drawBolster(ctx, m, x, z, dx, dz);
     const V = VEHICLES[m.type];
     drawBoxes(ctx, x, z, dx, dz, V.boxes, (role) => (role === 'dark' ? DARK : role === 'load' ? m.load : m.paint), { sort: V.sort, outline: !V.bike });
   }
@@ -1703,6 +1724,169 @@ Work step by step, check the licences of the data you use, and ask me about the 
     for (const [, draw] of parts) draw();
   }
 
+  // Bolster, the giant of St Agnes. He is always out walking somewhere on the map, and everyone who looks sees him
+  // in the same place: where he is follows from the time alone. The day is cut into legs of twenty minutes. Each leg
+  // has a number (minutes since 1970 divided by twenty), and that number seeds the dice that pick the road or path
+  // he starts on and every turn he takes. So the time of a find is proof of the place, and a link with the time in
+  // it shows anyone where he was. Click him and he is gone for you until his next leg starts somewhere else.
+  const LEG = 20 * 60, STRIDE = 1.9, TALL = 6.4; // seconds, metres a second, metres
+  const dice = (seed) => () => { // mulberry32: the same numbers in every browser
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let walkable = null;
+  const legs = new Map();
+  function bolsterLeg(n) {
+    if (legs.has(n)) return legs.get(n);
+    walkable ||= lanes.map((l, i) => i).filter((i) => lanes[i].ww > 0 && lanes[i].len > 5);
+    const rnd = dice(n), route = [], cum = [0];
+    let li = walkable[Math.floor(rnd() * walkable.length)];
+    while (cum[cum.length - 1] < LEG * STRIDE + 50 && route.length < 2000) {
+      route.push(li);
+      cum.push(cum[cum.length - 1] + lanes[li].len);
+      const l = lanes[li], all = (outs.get(l.b) || []).filter((j) => lanes[j].ww > 0);
+      const ahead = all.filter((j) => lanes[j].e !== l.e);
+      const from = ahead.length ? ahead : all; // at a dead end he turns round
+      if (!from.length) li = walkable[Math.floor(rnd() * walkable.length)]; // off the edge of the map: he comes in elsewhere
+      else li = from[Math.floor(rnd() * from.length)];
+    }
+    if (legs.size > 8) legs.clear();
+    legs.set(n, { route, cum });
+    return legs.get(n);
+  }
+  // Where he is at a time (seconds since 1970), or null before the roads are loaded.
+  function bolsterAt(t) {
+    if (!lanes.length) return null;
+    const n = Math.floor(t / LEG), since = t - n * LEG, { route, cum } = bolsterLeg(n), d = since * STRIDE;
+    let k = 0;
+    while (k < route.length - 1 && cum[k + 1] < d) k++;
+    const l = lanes[route[k]], s = Math.min(l.len, d - cum[k]);
+    let i = 0;
+    while (i < l.cum.length - 2 && l.cum[i + 1] < s) i++;
+    const a = l.p[i], b = l.p[i + 1], seg = l.cum[i + 1] - l.cum[i] || 1, f = (s - l.cum[i]) / seg;
+    return { n, since, lane: l, s, x: a[0] + (b[0] - a[0]) * f, z: a[1] + (b[1] - a[1]) * f, dx: (b[0] - a[0]) / seg, dz: (b[1] - a[1]) / seg };
+  }
+  const bolsterEl = document.getElementById('bolster');
+  const unix = () => Date.now() / 1000;
+  let goneLeg = null, bolsterShown = null;
+  try { goneLeg = parseInt(localStorage.getItem('bolster-gone')) || null; } catch {}
+  // The giant as a mover for this frame, or null while he is gone for this visitor.
+  function bolsterNow() {
+    const g = bolsterAt(unix());
+    if (!g || g.n === goneLeg) return (bolsterShown = null);
+    const within = (list) => list && list.some(([a, b]) => g.s >= a - 2 && g.s <= b + 2);
+    // He steps out of thin air when a leg starts and fades as it ends.
+    const alpha = Math.min(1, g.since / 2, (LEG - g.since) / 2);
+    return (bolsterShown = { ...g, mode: GIANT, alpha, behind: within(g.lane.h[laneView]) || within(g.lane.t[laneView]) });
+  }
+  // Is this map pixel on him? A little room around him, more when the map is zoomed far out.
+  function overBolster(p) {
+    const g = bolsterShown;
+    if (!g || g.alpha < 0.5) return false;
+    const [fx, fy] = toPx(g.x, g.z, 0), [, ty] = toPx(g.x, g.z, TALL);
+    const pad = 5 / viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true));
+    return Math.abs(p.x - fx) < 2.2 * M.scale + pad && p.y > ty - pad && p.y < fy + pad;
+  }
+  // The name of where he stands: the road he is on, or else the nearest named place.
+  function placeName(x, z) {
+    let best = null, bd = 40;
+    for (const r of roads) for (let k = 0; k < r.p.length; k++) {
+      const d = Math.hypot(r.p[k][0] - x, r.p[k][1] - z);
+      if (d < bd) bd = d, best = `on ${r.n}`;
+    }
+    if (best) return best;
+    bd = Infinity;
+    for (const q of places) {
+      const o = gridToLocal(q.x, q.y), d = Math.hypot(o.x - x, o.z - z);
+      if (d < bd) bd = d, best = `near ${q.name}`;
+    }
+    return best || 'in St Agnes';
+  }
+  const when = (t) => new Date(t * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const clockTime = (t) => new Date(t * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  let bolsterLink = '';
+  function showBolsterCard(title, where, text, t, count) {
+    document.getElementById('bolster-title').textContent = title;
+    document.getElementById('bolster-where').textContent = where;
+    document.getElementById('bolster-text').textContent = text;
+    document.getElementById('bolster-count').textContent = count;
+    bolsterLink = `${location.origin}${location.pathname}#bolster=${Math.floor(t)}`;
+    document.getElementById('bolster-copy').textContent = 'Copy the link to this find';
+    closeInfo();
+    bolsterEl.hidden = false;
+  }
+  function closeBolster() {
+    bolsterEl.hidden = true;
+    if (marker) unanchor(marker), (marker = null);
+    if (/^#bolster=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+  }
+  function foundBolster() {
+    const g = bolsterShown, t = unix();
+    let finds = 0;
+    try { finds = (parseInt(localStorage.getItem('bolster-finds')) || 0) + 1; localStorage.setItem('bolster-finds', finds); localStorage.setItem('bolster-gone', g.n); } catch {}
+    goneLeg = g.n;
+    document.getElementById('map').classList.remove('over-bolster');
+    tip.hidden = true;
+    if (marker) unanchor(marker);
+    marker = document.createElement('div');
+    marker.className = 'marker';
+    anchor(marker, g.x, g.z, 0);
+    showBolsterCard('You found Bolster!', `${when(t)}, ${placeName(g.x, g.z)}.`,
+      `He saw you and he is gone. He walks again at ${clockTime((g.n + 1) * LEG)}, somewhere else on the map. Send the link to a friend: it shows where he stood at this minute.`,
+      t, finds ? `YOUR FINDS: ${finds}` : '');
+  }
+  // A link to a find: #bolster=<seconds since 1970>. The place follows from the time, so the link cannot lie.
+  function openBolsterLink() {
+    const m = location.hash.match(/^#bolster=(\d{9,11})$/);
+    if (!m || !lanes.length || !viewer) return false;
+    const t = parseInt(m[1]), g = bolsterAt(t);
+    flyTo(g.x + M.area.cx, M.area.cy - g.z, 0, 1.4, true, 60);
+    showBolsterCard('Bolster was found here', `${when(t)}, ${placeName(g.x, g.z)}.`,
+      'He has walked on since then. He is always somewhere on the map, on a road, a path or the sand, and everyone sees him in the same place. Can you find him? His story is at the Beacon, Chapel Porth and the Bolster Bank.', t, '');
+    return true;
+  }
+  document.getElementById('bolster-close').addEventListener('click', closeBolster);
+  document.getElementById('bolster-copy').addEventListener('click', async (e) => {
+    try {
+      await navigator.clipboard.writeText(bolsterLink);
+      e.target.textContent = 'Copied';
+    } catch {
+      prompt('Copy this link', bolsterLink);
+    }
+  });
+  window.addEventListener('hashchange', openBolsterLink);
+
+  // The giant, as the old sources have him: Robert Hunt (1865) gives only his size, his great hands and a knife, and
+  // George Cruikshank's drawing in Hunt's book a belted, long-sleeved tunic to the knee and bare lower legs. No
+  // club: none is told of or drawn. The straw beard and the leaves in his hair nod to the giant of the village's
+  // Bolster Festival. Nearly four times a walker.
+  const TUNIC = [136, 98, 58], BELT = [58, 44, 34], FLESH = [214, 170, 136], MANE = [92, 58, 36], STRAW = [216, 188, 122], LEAF = [78, 122, 54], STEEL = [176, 182, 188], EYE = [40, 34, 30];
+  function drawBolster(ctx, g, x, z, dx, dz) {
+    const K = TALL / 1.72, stride = (g.since * STRIDE) / (0.75 * K) * Math.PI;
+    const sw = Math.sin(stride) * 0.2, arm = Math.sin(stride) * 0.16, bob = Math.abs(Math.cos(stride)) * 0.03;
+    const boxes = [
+      [sw - 0.1, sw + 0.1, 0.085, 0, 0.52, FLESH, -0.14],
+      [-sw - 0.1, -sw + 0.1, 0.085, 0, 0.52, FLESH, 0.14],
+      [-0.18, 0.18, 0.28, 0.46 + bob, 1.3 + bob, TUNIC],
+      [-0.19, 0.19, 0.29, 0.8 + bob, 0.87 + bob, BELT],
+      [0.19, 0.215, 0.03, 0.6 + bob, 0.84 + bob, STEEL, 0.17],
+      [-arm - 0.08, -arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, -0.36],
+      [-arm - 0.07, -arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, -0.36],
+      [arm - 0.08, arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, 0.36],
+      [arm - 0.07, arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, 0.36],
+      [-0.14, 0.14, 0.15, 1.3 + bob, 1.6 + bob, FLESH],
+      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, -0.07],
+      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, 0.07],
+      [0.07, 0.2, 0.14, 1.17 + bob, 1.42 + bob, STRAW],
+      [-0.2, -0.12, 0.16, 1.24 + bob, 1.58 + bob, MANE],
+      [-0.18, 0.1, 0.17, 1.56 + bob, 1.72 + bob, MANE],
+      [-0.19, 0.115, 0.18, 1.58 + bob, 1.63 + bob, LEAF],
+    ].map(([a, b, w, h0, h1, c, right = 0]) => [a * K, b * K, w * K, h0 * K, h1 * K, c, right * K]);
+    drawBoxes(ctx, x, z, dx, dz, boxes, () => TUNIC, { sort: true, outline: true });
+  }
+
   // A bird: two wings that beat, with its shadow far off on the ground.
   function drawBird(ctx, f, b, inView) {
     const nx = -f.dz, nz = f.dx;
@@ -1750,6 +1934,10 @@ Work step by step, check the licences of the data you use, and ask me about the 
       const [x, z, dx, dz] = place(m);
       if (inView(x, z, 0)) (objectsLayer && m.behind ? behind : front).push([depthOf(x, z), m, x, z, dx, dz]);
     }
+    // Bolster: tall enough to see from far off, and under the buildings and trees layer where he walks behind them,
+    // so a house in front hides his legs and not his head.
+    const g = bolsterNow();
+    if (g && k >= 0.1 && inView(g.x, g.z, 0)) (objectsLayer && g.behind ? behind : front).push([depthOf(g.x, g.z), g, g.x, g.z, g.dx, g.dz]);
     // The dippers sit low in open water: drawn under the buildings and trees layer, so whatever stands in front hides them.
     dippers ||= makeDippers();
     if (k >= 0.35 && inView(dippers.x, dippers.z, 0)) (objectsLayer ? behind : front).push([depthOf(dippers.x, dippers.z), dippers, dippers.x, dippers.z, 0, 0]);

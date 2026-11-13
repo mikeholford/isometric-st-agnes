@@ -176,8 +176,16 @@ POINTS = [
         "note": "192 m: the top of the map",
         "kind": "Hill · 192 m",
         "latlon": (50.30731, -5.21735),
-        "text": "The Beacon rises 192 metres above the sea and can be seen from most of west Cornwall. Fires were lit here to pass on warnings and, later, to mark celebrations. In the legend the giant Bolster stood with one foot on the Beacon and the other on Carn Brea, six miles off. The hill is heathland of heather and gorse, in the care of the National Trust.",
+        "text": "The Beacon rises 192 metres above the sea and can be seen from most of west Cornwall. Fires were lit here to pass on warnings and, later, to mark celebrations. A Bronze Age burial mound stands on the top, the last of a row of three. Old stories say the giant Bolster could stand with one foot here and the other on Carn Brea, six miles off, and that the heaps of stones on the hill were carried up by his wife in her apron when he was angry with her. The hill is heathland of heather and gorse, in the care of the National Trust.",
         "more": "https://www.nationaltrust.org.uk/visit/cornwall/st-agnes-and-chapel-porth",
+    },
+    {
+        "name": "Bolster Bank",
+        "note": "The earth bank that gave the giant his name",
+        "kind": "Earthwork",
+        "latlon": (50.30295, -5.21054),
+        "text": "A bank of earth with a ditch that once ran about two miles, from Chapel Coombe to Trevaunance Coombe, and cut the whole headland off from the land behind it. About a third is left. Nobody knows who built it or when; the name is on record in 1398, as Bothlester, so the bank is older than that. The name is Cornish for a hump like an upturned boat. When Cornish was no longer spoken here, people took Bolster for the name of a giant and said the bank was his work. That was written down before 1742, and it is the oldest record of the giant.",
+        "more": "https://historicengland.org.uk/listing/the-list/list-entry/1016444",
     },
     {
         "name": "Trevaunance Cove",
@@ -191,7 +199,7 @@ POINTS = [
         "note": "National Trust beach under the cliffs of Wheal Coates",
         "kind": "Cove",
         "latlon": (50.30025, -5.23476),
-        "text": "At high water there is hardly a beach here; at low water the sand runs a long way north and south under the cliffs. The cove takes its name from a medieval chapel that stood above it until 1780; its holy well lasted until 1820. In the legend St Agnes outwitted the giant Bolster here: she asked him to fill a hole in the rock with his blood, and the hole ran out to the sea. The village plays the story out each year in the Bolster pageant.",
+        "text": "At high water there is hardly a beach here; at low water the sand runs a long way north and south under the cliffs. The cove takes its name from a medieval chapel that stood above it until about 1780; its holy well lasted until 1820. The legend of the giant Bolster ends here. He would not leave St Agnes alone, so she asked for one proof of his love: to fill a hole in the cliff with his blood. The hole ran out to the sea and never filled, and the giant bled to death. People point to the red rock as his blood; iron in the rock gives the colour. Robert Hunt wrote the story down in 1865. On the early May bank holiday weekend the village plays it out on the cliffs here, at the Bolster Festival.",
         "more": "https://www.nationaltrust.org.uk/visit/cornwall/st-agnes-and-chapel-porth",
     },
     {
@@ -255,6 +263,7 @@ CATEGORIES = [
         "Towanroath Engine House, Wheal Coates", "Whim Engine House, Wheal Coates", "Wheal Kitty", "Wheal Friendly",
         "Blue Hills Engine House", "Blue Hills Tin Streams", "Trevaunance Cove",
     ]),
+    ("bolster", "The giant Bolster", ["Bolster Bank", "St Agnes Beacon", "Chapel Porth"]),
     ("village", "The village", [
         "St Agnes Parish Church", "Stippy Stappy", "Miners and Mechanics Institute", "St Agnes Methodist Church",
         "Our Lady, Star of the Sea", "St Agnes Museum",
