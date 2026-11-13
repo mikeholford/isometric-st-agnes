@@ -15,6 +15,7 @@ SCALE="${SCALE:-4}"
 (builtin cd scripts && uv run --quiet --with shapely python build_places.py)
 (builtin cd scripts && uv run --quiet --with numpy python build_hotspots.py)
 (builtin cd scripts && python3 build_routes.py)
+(builtin cd scripts && uv run --quiet build_roads.py)
 (builtin cd scripts && uv run --quiet build_traffic.py)
 
 [ -d node_modules ] || bun install

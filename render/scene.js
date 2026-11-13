@@ -14,7 +14,7 @@ const BACKGROUND = new THREE.Color(0x20242c);
 const ROAD_ALPHA = 0.5; // marks road pixels in the color target, see makeGround and the post pass
 
 const DATA = '/data/build';
-const TYPES = { house: 0, barn: 1, shed: 2, greenhouse: 3, tank: 4, silo: 5, canopy: 6, church: 7, tower: 8, turret: 9, school: 10, mast: 11, cross: 12, engine: 13, stack: 14 };
+const TYPES = { house: 0, barn: 1, shed: 2, greenhouse: 3, tank: 4, silo: 5, canopy: 6, church: 7, tower: 8, turret: 9, school: 10, mast: 11, cross: 12, engine: 13, stack: 14, outbuilding: 15 };
 
 const rgb = (r, g, b) => new THREE.Color(r / 255, g / 255, b / 255);
 const hash = (x) => {
@@ -50,8 +50,8 @@ function nearestRoof(c) {
 // Facades of a Cornish mining village: killas and granite rubble, lime render in white and cream, a few painted
 // fronts. There is no open register of construction years here, so every building draws from one list.
 const WALLS_HOUSE = [
-  [rgb(232, 226, 210), 5], [rgb(214, 204, 184), 3], [rgb(168, 150, 128), 4], [rgb(142, 128, 112), 3], [rgb(190, 170, 140), 2],
-  [rgb(120, 112, 104), 2], [rgb(226, 206, 178), 1], [rgb(176, 196, 204), 1], [rgb(222, 188, 170), 1],
+  [rgb(236, 232, 220), 6], [rgb(226, 218, 200), 4], [rgb(212, 202, 184), 2], [rgb(170, 158, 142), 3], [rgb(150, 140, 128), 2],
+  [rgb(190, 176, 152), 1], [rgb(198, 210, 212), 0.6], [rgb(226, 200, 184), 0.6], [rgb(222, 214, 172), 0.5],
 ];
 const FRAMES = [rgb(240, 238, 230), rgb(240, 238, 230), rgb(60, 78, 92), rgb(84, 108, 96), rgb(70, 64, 60)];
 
@@ -77,6 +77,7 @@ function wallColor(m) {
   if (m.kind === 'tank') return [rgb(74, 98, 82), rgb(150, 150, 140), rgb(64, 72, 80)][Math.floor(m.rand * 3)];
   if (m.kind === 'silo') return rgb(196, 198, 192);
   if (m.kind === 'barn' || m.kind === 'shed') return pickWeighted(WALLS_BARN, m.rand);
+  if (m.kind === 'outbuilding') return pickWeighted(WALLS_HOUSE, m.rand).clone().multiplyScalar(0.9);
   return pickWeighted(WALLS_HOUSE, m.rand);
 }
 
@@ -125,7 +126,8 @@ vec3 buildingPattern(vec3 base) {
       // Houses: a grid of windows per storey, and a darker plinth.
       float fl = mod(vUv2.y, 2.8);
       float col = mod(vUv2.x + 0.4, 3.1);
-      bool win = vUv2.y > 0.5 && fl > 0.85 && fl < 2.15 && col > 0.8 && col < 2.2;
+      // No window above the eaves (vAxis): a gable end stays plain.
+      bool win = vUv2.y > 0.5 && vUv2.y - fl + 2.3 < vAxis && fl > 0.85 && fl < 2.15 && col > 0.8 && col < 2.2;
       if (win) {
         c = vec3(0.21, 0.26, 0.33);
         if (fl > 1.95 || col < 0.98) c = vFrame;
@@ -137,6 +139,9 @@ vec3 buildingPattern(vec3 base) {
       if (vUv2.y < 0.9) c = mix(c, vec3(0.6, 0.6, 0.58), 0.6);
       float bay = mod(vUv2.x, 14.0);
       if (type == 1 && bay > 4.0 && bay < 8.0 && vUv2.y < 4.2 && vUv2.y > 0.2) c = vec3(0.36, 0.38, 0.4);
+    } else if (type == 15) {
+      // Garage, garden shed or lean-to beside a house: a plain wall and a darker plinth.
+      if (vUv2.y < 0.3) c *= 0.75;
     } else if (type == 3) {
       // Greenhouse glass: pale with the crop showing through, white mullions.
       c = mix(vec3(0.74, 0.82, 0.84), vec3(0.42, 0.58, 0.42), 0.3);
@@ -297,8 +302,11 @@ async function makeBuildings() {
 // ---------------------------------------------------------------------------------------------
 // Trees
 
-const LEAVES = [rgb(78, 124, 50), rgb(92, 138, 56), rgb(66, 112, 48), rgb(106, 146, 60), rgb(84, 116, 44), rgb(72, 130, 64)];
-const NEEDLES = [rgb(44, 84, 54), rgb(52, 92, 58), rgb(38, 74, 50)];
+// Wind-cut sycamore, ash and thorn: deep, dull greens, so a crown reads as a tree and not as a bright ball.
+const LEAVES = [rgb(58, 92, 42), rgb(68, 102, 46), rgb(50, 84, 40), rgb(76, 106, 48), rgb(62, 88, 38), rgb(56, 96, 50)];
+const SCRUB = [rgb(64, 88, 40), rgb(74, 92, 42), rgb(56, 80, 40), rgb(82, 96, 46)];
+const NEEDLES = [rgb(40, 74, 50), rgb(46, 82, 54), rgb(34, 66, 46)];
+const BUSH_BELOW = 5.5; // lower than this it is thorn, gorse or a hedge: a bush that sits on the ground, no trunk
 
 function lumpySphere(seed) {
   const g = new THREE.IcosahedronGeometry(1, 2);
@@ -318,7 +326,7 @@ function lumpySphere(seed) {
 
 // Three flat tones per crown: lit, mid and shade, like a cel-shaded illustration.
 function toonRamp() {
-  const t = new THREE.DataTexture(new Uint8Array([70, 70, 70, 255, 150, 150, 150, 255, 255, 255, 255, 255]), 3, 1);
+  const t = new THREE.DataTexture(new Uint8Array([84, 84, 84, 255, 150, 150, 150, 255, 215, 215, 215, 255]), 3, 1);
   t.minFilter = t.magFilter = THREE.NearestFilter;
   t.needsUpdate = true;
   return t;
@@ -333,41 +341,59 @@ async function makeTrees() {
   const ramp = toonRamp();
   const leafMat = new THREE.MeshToonMaterial({ gradientMap: ramp });
   const needleMat = new THREE.MeshToonMaterial({ gradientMap: ramp });
-  const trunkMat = new THREE.MeshLambertMaterial({ color: rgb(92, 72, 54) });
+  const trunkMat = new THREE.MeshLambertMaterial({ color: rgb(74, 58, 46) });
+  // A big tree is a main crown with two smaller boughs beside it; a bush is one low lump.
+  const lumps = (h, r, kind) => (kind > 0.5 ? 0 : h >= BUSH_BELOW && r > 2.6 ? 3 : 1);
   const counts = [0, 0, 0];
   let conifers = 0;
   for (let i = 0; i < n; i++) {
-    if (t[i * N + 5] > 0.5) conifers++;
-    else counts[Math.floor(t[i * N + 9] * 3) % 3]++;
+    const o = i * N;
+    if (t[o + 5] > 0.5) conifers++;
+    else for (let j = 0; j < lumps(t[o + 2], t[o + 3], 0); j++) counts[(Math.floor(t[o + 9] * 3) + j) % 3]++;
   }
   const crowns = variants.map((g, k) => new THREE.InstancedMesh(g, leafMat, counts[k]));
   const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 7), needleMat, conifers);
-  const trunks = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), trunkMat, n);
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.62, 1, 6), trunkMat, n);
   const fill = [0, 0, 0];
   let ci = 0;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
+  const put = (k, x, y, z, rx, ry, color) => {
+    m.compose(p.set(x, y, z), q, s.set(rx, ry, rx));
+    crowns[k].setMatrixAt(fill[k], m);
+    crowns[k].setColorAt(fill[k]++, color);
+  };
   for (let i = 0; i < n; i++) {
-    const [x, z, h, r, base, kind, , , , seed, y0] = t.subarray(i * N, i * N + N);
+    const [x, z, h, r, , kind, , , , seed, y0] = t.subarray(i * N, i * N + N);
     q.setFromAxisAngle(up, seed * Math.PI * 2);
-    const trunkW = Math.min(0.7, 0.3 + h * 0.02);
-    const trunkH = Math.max(1, Math.min(base, h - 2 * Math.max(1, (h - base) / 2, Math.min(r * 0.9, h * 0.42))) + 0.8);
+    const bush = kind < 0.5 && h < BUSH_BELOW;
+    // The crown starts a fifth to a third of the way up, so the trunk shows under it and the tree stands on the ground.
+    const base = bush ? 0 : Math.min(4.5, h * (0.2 + 0.12 * hash(seed * 53)));
+    const trunkW = bush ? 0.001 : Math.min(1.3, 0.45 + h * 0.045);
+    const trunkH = bush ? 0.001 : base + (h - base) * 0.45;
     m.compose(p.set(x, y0 + trunkH / 2 - 0.4, z), q, s.set(trunkW, trunkH + 0.8, trunkW));
     trunks.setMatrixAt(i, m);
     if (kind > 0.5) {
-      const bottom = base * 0.5;
+      const bottom = Math.min(base, 1.5);
       m.compose(p.set(x, y0 + (bottom + h) / 2, z), q, s.set(r * 0.9, h - bottom, r * 0.9));
       cones.setMatrixAt(ci, m);
       cones.setColorAt(ci++, NEEDLES[Math.floor(seed * 97) % NEEDLES.length]);
-    } else {
-      const k = Math.floor(seed * 3) % 3;
-      // Full, round crowns: seen from above, a tree is mostly crown.
-      const half = Math.max(1, (h - base) / 2, Math.min(r * 0.9, h * 0.42));
-      m.compose(p.set(x, y0 + h - half, z), q, s.set(r * 1.12, half, r * 1.12));
-      crowns[k].setMatrixAt(fill[k], m);
-      const c = LEAVES[Math.floor(seed * 1013) % LEAVES.length].clone();
-      c.multiplyScalar(0.92 + 0.16 * hash(seed * 77));
-      crowns[k].setColorAt(fill[k]++, c);
+      continue;
+    }
+    const k = Math.floor(seed * 3) % 3;
+    const palette = bush ? SCRUB : LEAVES;
+    const c = palette[Math.floor(seed * 1013) % palette.length].clone().multiplyScalar(0.9 + 0.2 * hash(seed * 77));
+    if (bush) {
+      // Wider than it is high, and a little into the ground so no gap shows on a slope.
+      put(k, x, y0 + h * 0.42, z, Math.max(r, h * 0.55), h * 0.6, c);
+      continue;
+    }
+    const half = Math.max(1.2, (h - base) / 2);
+    const wide = Math.min(r, half * 1.5); // never a disc on a stick
+    put(k, x, y0 + h - half, z, wide, half, c);
+    for (let j = 1; j < lumps(h, r, 0); j++) {
+      const a = (seed * 9 + j * 0.47) * Math.PI * 2, d = wide * 0.55, f = 0.62 + 0.14 * hash(seed * 31 + j);
+      put((k + j) % 3, x + Math.cos(a) * d, y0 + base + half * f * 0.95, z + Math.sin(a) * d, wide * f, half * f, c.clone().multiplyScalar(0.94 + 0.1 * hash(seed * 13 + j)));
     }
   }
   for (const mesh of [...crowns, cones, trunks]) {

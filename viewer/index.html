@@ -180,6 +180,10 @@
   }
   #tip b { display: block; color: var(--fg); font-size: 13px; font-weight: 500; }
   #map.over-hotspot { cursor: pointer; }
+  /* The name of the road under the pointer (roads.json): a smaller label than a named place gets. */
+  #tip.road { padding: 3px 7px; border-radius: 4px; }
+  #tip.road b { font-size: 12px; }
+  #map.spinning, #map.spinning * { cursor: grabbing !important; }
   /* Walking routes: dashed red for the junction network, yellow for the long-distance path. */
   .routes { pointer-events: none; overflow: visible; }
   .routes polyline { fill: none; stroke-width: 3; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
@@ -358,7 +362,7 @@
   </div>
   <div id="intro-body">
   <p>The mining village on the north coast of Cornwall in miniature, from Chapel Porth and Wheal Coates over the Beacon to Trevaunance Cove.</p>
-  <p class="long">Every house, every hedge and every tree stands in its real place, and the land has its real shape, rebuilt from open maps and laser height measurements. Scroll or pinch to zoom, or look up a street or place below.</p>
+  <p class="long">Every house, every hedge and every tree stands in its real place, and the land has its real shape, rebuilt from open maps and laser height measurements. Scroll or pinch to zoom, or look up a street or place below. Point at a road to see its name. Hold ⌘ (or Ctrl) and drag to turn the map.</p>
   <form id="search" role="search">
     <input id="goto" list="place-list" placeholder="Go to a street or place…" autocomplete="off" aria-label="Go to a street or place">
     <datalist id="place-list"></datalist>
@@ -385,7 +389,7 @@
   <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
   <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
   <button type="button" id="zoom-home" aria-label="Back to the starting point">⌂</button>
-  <button type="button" id="turn" aria-label="Turn the map a quarter" title="Turn" hidden><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><g id="needle"><path d="M9 2.6l2.3 6.4H6.7z" fill="currentColor"/><path d="M9 15.4l2.3-6.4H6.7z" fill="currentColor" opacity=".35"/></g></svg></button>
+  <button type="button" id="turn" aria-label="Turn the map a quarter" title="Turn (or hold ⌘ / Ctrl and drag)" hidden><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><g id="needle"><path d="M9 2.6l2.3 6.4H6.7z" fill="currentColor"/><path d="M9 15.4l2.3-6.4H6.7z" fill="currentColor" opacity=".35"/></g></svg></button>
   <button type="button" id="music" aria-label="Music on or off" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M6.6 13.2V4.3l8-1.8v9.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><ellipse cx="4.6" cy="13.3" rx="2.1" ry="1.7" fill="currentColor"/><ellipse cx="12.6" cy="11.8" rx="2.1" ry="1.7" fill="currentColor"/></svg></button>
   <button type="button" id="evening" aria-label="Evening on or off" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><mask id="moon-cut"><rect width="18" height="18" fill="#fff"/><circle cx="12.4" cy="6" r="5.2" fill="#000"/></mask><circle cx="8.6" cy="9.6" r="6.2" fill="currentColor" mask="url(#moon-cut)"/><circle cx="14.2" cy="12.4" r=".9" fill="currentColor" opacity=".7"/></svg></button>
 </div>
@@ -505,24 +509,18 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // Index of the current view in a data file that lists its own views (hotspots.json, traffic.json).
   const viewIn = (views) => Math.max(0, (views || [45]).indexOf(VIEW.look));
 
-  // The land is not flat here: height.png (scripts/build_terrain.py) holds the ground height every few metres, as
-  // (height + 100 m) in decimetres with the high byte in red and the low byte in green. Row 0 is the north edge.
+  // The land is not flat here: height.bin (scripts/build_terrain.py) holds the ground height every few metres, as
+  // plain numbers: (height + 100 m) in decimetres. Row 0 is the north edge. Not a picture, because a browser may
+  // adjust the colours of a picture for the screen, and then cars and road names float above the land.
   let HEIGHTS = null;
   async function loadHeights() {
     const g = M.area.height;
     if (!g) return;
     try {
-      const img = new Image();
-      img.src = 'height.png';
-      await img.decode();
-      const c = document.createElement('canvas');
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      const ctx = c.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0);
-      const d = ctx.getImageData(0, 0, c.width, c.height).data, h = new Float32Array(c.width * c.height);
-      for (let i = 0; i < h.length; i++) h[i] = (d[i * 4] * 256 + d[i * 4 + 1]) / 10 - 100;
-      HEIGHTS = { h, w: c.width, rows: c.height, res: g.res };
+      const d = new DataView(await (await fetch('height.bin')).arrayBuffer());
+      const w = d.getUint16(0, true), rows = d.getUint16(2, true), h = new Float32Array(w * rows);
+      for (let i = 0; i < h.length; i++) h[i] = d.getUint16(4 + i * 2, true) / 10 - 100;
+      HEIGHTS = { h, w, rows, res: g.res };
     } catch { /* without it the map still works, as if the land were flat */ }
   }
   // Height of the ground in metres at local x (east) and z (south), between the four grid points around it.
@@ -809,6 +807,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     viewer.addHandler('animation-finish', () => pinAt && writePin());
     fetch('hotspots.json', { cache: 'no-store' }).then((r) => r.json()).then(addHotspots);
     fetch('routes.json', { cache: 'no-store' }).then((r) => r.json()).then(addRoutes);
+    fetch('roads.json', { cache: 'no-store' }).then((r) => r.json()).then(addRoads).catch(() => {});
     fetch('traffic.json', { cache: 'no-store' }).then((r) => r.json()).then(addTraffic).catch(() => {});
   });
 
@@ -1130,6 +1129,42 @@ Work step by step, check the licences of the data you use, and ask me about the 
     return c;
   }
 
+  // Road names (roads.json, built by scripts/build_roads.py): the stretches of road in a grid of 64 m cells, so the
+  // pointer only has to look at the few stretches near it. A small label beside the pointer names the road under it.
+  const CELL = 64;
+  let roads = [], roadGrid = new Map(), overRoad = null;
+  const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  function addRoads(list) {
+    roads = list;
+    roads.forEach((r, i) => {
+      for (let k = 0; k < r.p.length - 1; k++) {
+        const [ax, az] = r.p[k], [bx, bz] = r.p[k + 1], pad = 16;
+        for (let cx = Math.floor((Math.min(ax, bx) - pad) / CELL); cx <= Math.floor((Math.max(ax, bx) + pad) / CELL); cx++) {
+          for (let cz = Math.floor((Math.min(az, bz) - pad) / CELL); cz <= Math.floor((Math.max(az, bz) + pad) / CELL); cz++) {
+            const key = `${cx},${cz}`;
+            if (!roadGrid.has(key)) roadGrid.set(key, []);
+            roadGrid.get(key).push([i, k]);
+          }
+        }
+      }
+    });
+  }
+  // The named road at a map pixel: the pointer must be on the road itself, give or take a few screen pixels.
+  function roadAt(p) {
+    if (!roads.length) return null;
+    const g = imageToGround(p.x, p.y);
+    const perMeter = M.scale * viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true));
+    const slack = Math.min(6, Math.max(0.5, 3 / perMeter));
+    let best = null, bestD = Infinity;
+    for (const [i, k] of roadGrid.get(`${Math.floor(g.x / CELL)},${Math.floor(g.z / CELL)}`) || []) {
+      const r = roads[i], [ax, az] = r.p[k], [bx, bz] = r.p[k + 1];
+      const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((g.x - ax) * dx + (g.z - az) * dz) / (dx * dx + dz * dz || 1)));
+      const d = Math.hypot(g.x - ax - dx * t, g.z - az - dz * t) - r.w;
+      if (d < slack && d < bestD) best = r, bestD = d;
+    }
+    return best;
+  }
+
   function hover(p, ev) {
     // With overlapping outlines (a church and its tower), the smallest one wins.
     let hit = null, area = Infinity;
@@ -1140,15 +1175,20 @@ Work step by step, check the licences of the data you use, and ask me about the 
         if (Math.abs(a) < area) { hit = h; area = Math.abs(a); }
       }
     }
-    if (hit !== hovered) {
+    // A named place wins over the road it stands on.
+    const road = p && !hit ? roadAt(p) : null;
+    if (hit !== hovered || road !== overRoad) {
       hovered?.el.classList.remove('on');
       hit?.el.classList.add('on');
       hovered = hit;
+      overRoad = road;
       document.getElementById('map').classList.toggle('over-hotspot', !!hit);
       if (hit) tip.innerHTML = `<b>${T(hit.name)}</b>${T(hit.note || hit.kind || '')}`;
-      tip.hidden = !hit;
+      else if (road) tip.innerHTML = `<b>${escapeHtml(road.n)}</b>`;
+      tip.classList.toggle('road', !hit && !!road);
+      tip.hidden = !hit && !road;
     }
-    if (hit && ev) {
+    if ((hit || road) && ev) {
       tip.style.left = `${Math.min(ev.clientX + 16, innerWidth - tip.offsetWidth - 8)}px`;
       tip.style.top = `${ev.clientY + 16}px`;
     }
@@ -1900,14 +1940,15 @@ Work step by step, check the licences of the data you use, and ask me about the 
   };
   const PIXEL = 10; // the coarsest block halfway through the turn, in CSS pixels
   let turning = false;
-  function rotateView() {
+  // dir is +1 for the next view, -1 for the one before; from is the angle the map already stands at (see the spin below).
+  function rotateView(dir = 1, from = 0) {
     const views = M?.views || [];
     if (views.length < 2 || turning) return;
     turning = true;
     const vp = viewer.viewport;
     const here = vp.viewportToImageCoordinates(vp.getCenter(true));
     const g = imageToGround(here.x, here.y);
-    const next = (VIEW.i + 1) % views.length;
+    const next = (VIEW.i + dir + views.length) % views.length;
     const turn = ((views[next].look - VIEW.look + 540) % 360) - 180; // +90 or -90
 
     const map = viewer.drawer.canvas, W = map.width, H = map.height;
@@ -1956,8 +1997,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const ease = (t) => 1 - (1 - t) ** 3;
     const fade = (t) => Math.min(1, Math.max(0, (t - 0.2) / 0.5));
     let block = 1;
-    const paint = (t) => {
-      const b = Math.max(1, Math.round(dpr * PIXEL * Math.sin(Math.PI * t))), deg = turn * ease(t);
+    const paint = (t, stillOnly = false) => {
+      const b = Math.max(1, Math.round(dpr * PIXEL * Math.sin(Math.PI * t))), deg = from + (turn - from) * ease(t);
       const resize = b !== block;
       block = b;
       for (const sh of sheets) {
@@ -1969,7 +2010,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, sh.el.width, sh.el.height);
         ctx.imageSmoothingQuality = 'high';
-        for (const [d, alpha, imgs] of [[deg - turn, 1, sh.live], [deg, 1 - fade(t), [sh.from]]]) {
+        for (const [d, alpha, imgs] of [...(stillOnly ? [] : [[deg - turn, 1, sh.live]]), [deg, 1 - fade(t), [sh.from]]]) {
           ctx.globalAlpha = alpha;
           ctx.setTransform(k, 0, 0, k, (k * W) / 2, (k * H) / 2);
           ctx.transform(...turnMatrix(d), 0, 0);
@@ -1978,6 +2019,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
         }
       }
     };
+    if (from) paint(0, true); // the still waits at the angle the map was let go at
     const t0 = performance.now();
     let start = null;
     const ready = () => added.filter(Boolean).length === urls.length && added.every((item) => item.getFullyLoaded());
@@ -2006,13 +2048,13 @@ Work step by step, check the licences of the data you use, and ask me about the 
     warmTimer = setTimeout(() => {
       const views = M?.views || [];
       if (views.length < 2 || turning) return;
-      const next = (VIEW.i + 1) % views.length, v = views[next];
       const vp = viewer.viewport, b = vp.viewportToImageRectangle(vp.getBounds(true));
       const g = imageToGround(b.x + b.width / 2, b.y + b.height / 2);
-      const t = imageIn(next, g.x, g.z);
       const top = Math.ceil(Math.log2(Math.max(M.width, M.height)));
       const best = Math.min(top, top + Math.ceil(Math.log2(viewer.drawer.canvas.width / b.width)));
-      for (const level of [best - 1, best]) {
+      // The view on either side, since the map turns both ways.
+      for (const next of new Set([(VIEW.i + 1) % views.length, (VIEW.i + views.length - 1) % views.length])) for (const level of [best - 1, best]) {
+        const v = views[next], t = imageIn(next, g.x, g.z);
         const f = 2 ** (level - top), size = 1024;
         const [x0, x1] = [(t.x - b.width / 2) * f, (t.x + b.width / 2) * f].map((q) => Math.floor(Math.max(0, q) / size));
         const [y0, y1] = [(t.y - b.height / 2) * f, (t.y + b.height / 2) * f].map((q) => Math.floor(Math.max(0, q) / size));
@@ -2022,7 +2064,53 @@ Work step by step, check the licences of the data you use, and ask me about the 
       }
     }, 400);
   }
-  turnBtn.addEventListener('click', rotateView);
+  turnBtn.addEventListener('click', () => rotateView());
+
+  // Spin: hold Command (Ctrl on other keyboards) and drag sideways. The map turns with the pointer like a turntable;
+  // it has four views, so past half a quarter turn the next view comes in, and let go earlier it goes on to the
+  // nearest one. The drag can go on for as many quarters as you like.
+  const mapEl = document.getElementById('map');
+  const SPIN_PX = 4; // pixels of drag per degree
+  const spinKey = (e) => (/Mac|iPhone|iPad/.test(navigator.platform) ? e.metaKey : e.ctrlKey);
+  const setSpin = (deg) => (viewer.canvas.style.transform = deg ? `matrix(${turnMatrix(deg).join(',')},0,0)` : '');
+  let spin = null;
+  mapEl.addEventListener('pointerdown', (e) => {
+    if (!spinKey(e) || e.button !== 0 || !viewer || (M?.views || []).length < 2) return;
+    e.preventDefault();
+    e.stopPropagation();
+    spin = { id: e.pointerId, x: e.clientX, deg: 0 };
+    mapEl.setPointerCapture(e.pointerId);
+    mapEl.classList.add('spinning');
+    hover(null);
+  }, true);
+  mapEl.addEventListener('pointermove', (e) => {
+    if (!spin || e.pointerId !== spin.id) return;
+    e.stopPropagation();
+    if (turning) return void (spin.x = e.clientX); // the next quarter starts where the pointer is when this one is done
+    spin.deg = (e.clientX - spin.x) / SPIN_PX;
+    if (Math.abs(spin.deg) < 45) return void setSpin(spin.deg);
+    const d = Math.sign(spin.deg) * 45;
+    spin.x = e.clientX, spin.deg = 0;
+    setSpin(0);
+    rotateView(Math.sign(d), d);
+  }, true);
+  const endSpin = (e) => {
+    if (!spin || e.pointerId !== spin.id) return;
+    const d = spin.deg;
+    spin = null;
+    mapEl.classList.remove('spinning');
+    if (turning || !d) return;
+    if (Math.abs(d) >= 12) {
+      setSpin(0);
+      rotateView(Math.sign(d), d);
+    } else {
+      viewer.canvas.style.transition = 'transform 0.15s ease-out';
+      setSpin(0);
+      setTimeout(() => (viewer.canvas.style.transition = ''), 170);
+    }
+  };
+  mapEl.addEventListener('pointerup', endSpin, true);
+  mapEl.addEventListener('pointercancel', endSpin, true);
   // Warm the next view whenever the map comes to rest.
   const warmOnRest = () => viewer ? viewer.addHandler('animation-finish', warmNext) : setTimeout(warmOnRest, 200);
   warmOnRest();

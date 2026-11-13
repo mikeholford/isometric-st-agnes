@@ -12,7 +12,7 @@ Output (data/build/):
   dsm.npy       first-return surface height on the same grid (tree tops, roofs)
   sea.npy       bool mask of the sea on the same grid
   terrain.bin   float32 grid at TERRAIN_RES (2 m), (ny + 1) x (nx + 1) heights, for render/scene.js
-  height.png    the same at VIEWER_RES (4 m) for the viewer: (height + 100 m) in decimetres, high byte in red, low in green
+  height.bin    the same at VIEWER_RES (4 m) for the viewer: uint16 width and height, then (height + 100 m) in decimetres
   area.json     gains "terrain": {res, nx, ny, sea, min, max} and "height": {res, nx, ny}
 """
 
@@ -102,8 +102,9 @@ def main():
     grid.astype(np.float32).tofile(BUILD / "terrain.bin")
     small, vx, vy = sample(dtm, VIEWER_RES)
     q = np.clip(np.round((small + 100) * 10), 0, 65535).astype(np.uint16)
-    rgb = np.stack([q >> 8, q & 255, np.zeros_like(q)], -1).astype(np.uint8)
-    Image.fromarray(rgb).save(BUILD / "height.png", optimize=True)
+    # Plain numbers, not a picture: a browser may adjust the colours of a picture for the screen, and one step of
+    # red is 25 m of height. Two uint16 for width and height, then the rows from the north, little-endian.
+    (BUILD / "height.bin").write_bytes(np.array(q.shape[::-1], "<u2").tobytes() + q.astype("<u2").tobytes())
 
     write_area()
     area = json.loads((BUILD / "area.json").read_text())

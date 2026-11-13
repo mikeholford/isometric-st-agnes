@@ -10,11 +10,13 @@ It follows [Isometric Helenaveen](https://jankeesvw.github.io/isometric-helenave
 |---|---|---|
 | Grid | RD New (EPSG:28992) | British National Grid (EPSG:27700), `scripts/geo.py` |
 | Heights | AHN, 50 cm | Environment Agency LIDAR Composite 2022, 1 m: bare earth (DTM) and first return (DSM) |
-| Buildings | 3D BAG solids with roof shapes | Outlines from OpenStreetMap, and OS OpenMap Local where OpenStreetMap has none; height, roof rise and ridge direction measured per outline in the lidar (`scripts/build_buildings.py`) |
+| Buildings | 3D BAG solids with roof shapes | Outlines from OpenStreetMap, and OS OpenMap Local where OpenStreetMap has none, say where a building stands. Its real footprint and roof planes come from the lidar surface, on a 1 m grid square to the building (`scripts/roofs.py`). OS OpenMap Local draws a terrace as one block, so each block is divided among its address points (OS Open UPRN) and every house has its own walls. A house newer than the lidar survey gets a standard roof (`scripts/build_buildings.py`) |
 | Ground | BGT polygons, coloured with an aerial photo | Land use from OpenStreetMap and OS OpenMap Local; sea, foreshore, cliffs, hedges and scrub from the lidar and the OS low water mark (`scripts/build_ground.py`) |
 | Aerial photo | PDOK, 25 cm | None: no open photo newer than 2008 covers the village, so colours come from what a surface is |
-| Terrain | Flat | A real surface (`scripts/build_terrain.py`): the renderer drapes the ground over it, buildings and trees stand on it, the viewer looks heights up in `height.png` |
+| Terrain | Flat | A real surface (`scripts/build_terrain.py`): the renderer drapes the ground over it, buildings and trees stand on it, the viewer looks heights up in `height.bin` (plain numbers: a browser may adjust the colours of a picture) |
 | Traffic | Drives on the right | Drives on the left, and disappears behind hills |
+| Road names | Not shown | The name shows when the pointer is on a road (`scripts/build_roads.py`): names from OpenStreetMap, and from OS OpenMap Local where OpenStreetMap has none |
+| Turning | A button | The button, or hold Command (Ctrl on other keyboards) and drag |
 
 ## Pipeline
 
@@ -39,7 +41,7 @@ For another place in England: set the area in `scripts/config.py`, the grid squa
 ## Data and licences
 
 - Lidar: © Environment Agency copyright and/or database right 2022. All rights reserved. [Open Government Licence v3.0](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/).
-- OS OpenMap Local: contains OS data © Crown copyright and database right 2026. Open Government Licence v3.0.
+- OS OpenMap Local and OS Open UPRN: contains OS data © Crown copyright and database right 2026. Open Government Licence v3.0.
 - Buildings, land use, roads, paths, names and points of interest: © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, ODbL.
 - Music: [My Street](https://opengameart.org/content/my-street) by congusbongus, CC0.
 - Code: after [jankeesvw/isometric-helenaveen](https://github.com/jankeesvw/isometric-helenaveen).

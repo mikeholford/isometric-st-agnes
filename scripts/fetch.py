@@ -33,7 +33,7 @@ COVERAGES = {
 
 # OS OpenMap Local comes per 100 km square of the National Grid; St Agnes is in SW.
 OS_SQUARE = "SW"
-OS_LAYERS = ["Building", "ImportantBuilding", "Woodland", "SurfaceWater_Area", "SurfaceWater_Line", "Foreshore", "TidalWater", "TidalBoundary", "Glasshouse", "NamedPlace"]
+OS_LAYERS = ["Building", "ImportantBuilding", "Woodland", "SurfaceWater_Area", "SurfaceWater_Line", "Foreshore", "TidalWater", "TidalBoundary", "Glasshouse", "NamedPlace", "Road"]
 MARGIN = 60  # metres around the area, so shapes that cross its edge come whole
 LIDAR_BLOCK = 2000  # metres a side per lidar request: 2000 x 2000 cells of 1 m
 
@@ -115,6 +115,35 @@ def fetch_os():
             print(f"os {layer}: {len(feats)}", file=sys.stderr)
 
 
+def fetch_uprn():
+    """OS Open UPRN: a point for every address in Great Britain. A block of buildings with six addresses is a row of
+    six houses (scripts/build_buildings.py cuts it up). The file is 620 MB for the whole country: we keep only the
+    points in the area and throw the download away."""
+    out = RAW / "os_uprn.json"
+    if out.exists():
+        return
+    import csv
+    import subprocess
+
+    cache = RAW / "OpenUPRN_GB.zip"
+    url = "https://api.os.uk/downloads/v1/products/OpenUPRN/downloads?area=GB&format=CSV&redirect"
+    subprocess.run(["curl", "-sSL", "--fail", "--retry", "3", "-C", "-", "-o", str(cache), url], check=True)
+    pts = []
+    with zipfile.ZipFile(cache) as z:
+        name = next(n for n in z.namelist() if n.lower().endswith(".csv"))
+        with z.open(name) as f:
+            rows = csv.reader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+            head = [h.upper() for h in next(rows)]
+            ix, iy = head.index("X_COORDINATE"), head.index("Y_COORDINATE")
+            for row in rows:
+                x, y = float(row[ix]), float(row[iy])
+                if XMIN - MARGIN <= x <= XMAX + MARGIN and YMIN - MARGIN <= y <= YMAX + MARGIN:
+                    pts.append([x, y])
+    out.write_text(json.dumps(pts))
+    cache.unlink()
+    print(f"os uprn: {len(pts)} addresses", file=sys.stderr)
+
+
 def overpass(out, q, what):
     """Run an Overpass query into out (Overpass is often busy, so try a few servers)."""
     if out.exists():
@@ -177,6 +206,7 @@ def main():
     RAW.mkdir(parents=True, exist_ok=True)
     fetch_osm()  # one query at a time: the public Overpass servers turn away parallel requests
     fetch_os()
+    fetch_uprn()
     for kind in COVERAGES:
         for block in lidar_blocks():
             fetch_lidar(kind, *block)

@@ -25,19 +25,28 @@ from collections import Counter
 import mapbox_earcut as earcut
 import numpy as np
 from PIL import Image, ImageDraw
-from shapely.geometry import LineString, Polygon
-from shapely.ops import split
+from shapely import STRtree
+from shapely.geometry import LineString, MultiPoint, Point, Polygon
+from shapely.ops import split, voronoi_diagram
 
 from config import BUILD, CX, CY, LIDAR_RES, RAW, XMAX, XMIN, YMAX, YMIN, write_area
 from outlines import load_outlines
+from roofs import lidar_roof
 
 KIND = {"GroundSurface": 0, "WallSurface": 1, "RoofSurface": 2}
 COLS = 12
 
-# Roofs of a Cornish village: Delabole slate above all, then grey concrete tile, a little red clay, and fibre
-# cement or tin sheet on the farm buildings. (colour, weight)
-ROOFS_HOUSE = [((66, 68, 74), 5), ((88, 90, 96), 4), ((44, 48, 56), 2), ((120, 122, 124), 2), ((120, 92, 70), 1.5), ((140, 64, 50), 0.6), ((108, 56, 46), 0.6)]
+# Roofs of a Cornish village: Delabole slate on nearly every house, new or weathered, and a few of grey-brown
+# concrete tile; fibre cement or tin sheet on the farm buildings. (colour, weight)
+ROOFS_HOUSE = [((70, 73, 80), 5), ((82, 85, 92), 5), ((58, 62, 70), 3), ((96, 98, 102), 2), ((102, 94, 88), 1)]
 ROOFS_BARN = [((150, 150, 146), 3), ((120, 122, 124), 3), ((98, 114, 98), 2), ((88, 90, 96), 2), ((120, 92, 70), 1)]
+
+# One house looks like the next when each takes its measures from a noisy 1 m lidar grid, so the lidar only
+# decides what it can tell apart: how many storeys, whether the roof is pitched, and which way the ridge runs.
+# The rest is the same for every house: eaves at a storey height, a roof pitch of 38 degrees.
+EAVES = (2.7, 5.3, 7.9)  # height of the eaves for one, two and three storeys
+PITCH = 0.78  # rise per metre of half width
+MAX_RISE = 4.6
 
 
 def ring_area(xy):
@@ -232,6 +241,13 @@ def add_masts(verts, meta, masts, dtm):
         emit(verts, frustum(bot, top, g - 0.5, g + m["height"]), bi, g, center_u=True)
 
 
+def long_side(poly):
+    rc = np.array(poly.minimum_rotated_rectangle.exterior.coords)[:4]
+    e1, e2 = rc[1] - rc[0], rc[2] - rc[1]
+    e = e1 if np.hypot(*e1) >= np.hypot(*e2) else e2
+    return float(np.arctan2(e[1], e[0]))
+
+
 def ground_at(dtm, x, y):
     row = int(np.clip((YMAX - y) / LIDAR_RES, 0, dtm.shape[0] - 1))
     col = int(np.clip((x - XMIN) / LIDAR_RES, 0, dtm.shape[1] - 1))
@@ -339,6 +355,72 @@ def steps(poly, dtm):
     return out or [poly]
 
 
+def load_addresses():
+    """Address points from OS Open UPRN (scripts/fetch.py), as an index to ask which lie in an outline."""
+    path = RAW / "os_uprn.json"
+    pts = [Point(x, y) for x, y in json.loads(path.read_text())] if path.exists() else []
+    return (STRtree(pts) if pts else None), pts
+
+
+def houses(poly, tree, pts):
+    """OS OpenMap Local draws a terrace, or a whole block in the middle of the village, as one outline. Every house
+    in it has an address point, so the outline is cut where one address ends and the next begins: each house is the
+    part of the block that is nearer to its own address than to any other. Returns [(polygon, direction of the row
+    at this house in radians, or None)] and the number of addresses in the block."""
+    if tree is None:
+        return [(poly, None)], None
+    inside = [pts[j] for j in tree.query(poly) if poly.buffer(0.5).contains(pts[j])]
+    # Flats and an upstairs office share a spot or lie a few metres apart: one house. And a house needs room, so
+    # the addresses are grouped more coarsely until each has at least 28 square metres of the block.
+    for gap in (3.0, 4.5, 6.0, 8.0):
+        groups = []
+        for q in inside:
+            near = next((g for g in groups if any(q.distance(o) < gap for o in g)), None)
+            if near is None:
+                groups.append([q])
+            else:
+                near.append(q)
+        if poly.area / max(len(groups), 1) >= 28:
+            break
+    count = len(groups)
+    if count < 2 or poly.interiors:
+        return [(poly, None)], count
+    seeds = [np.mean([[q.x, q.y] for q in g], axis=0) for g in groups]
+    # The row runs along a wall of the block: of the walls that point about the way the next address lies, the longest.
+    ring = np.array(poly.exterior.coords)
+    edges = ring[1:] - ring[:-1]
+    lengths, angles = np.hypot(edges[:, 0], edges[:, 1]), np.arctan2(edges[:, 1], edges[:, 0])
+
+    def along_wall(a):
+        off = np.abs((angles - a + np.pi / 2) % np.pi - np.pi / 2)
+        ok = off < np.radians(30)
+        return float(angles[np.argmax(np.where(ok, lengths, -1))]) if ok.any() else a
+
+    cells = voronoi_diagram(MultiPoint(seeds), envelope=poly.envelope.buffer(60))
+    out = []
+    for cell in cells.geoms:
+        k = next((i for i, sd in enumerate(seeds) if cell.contains(Point(sd))), None)
+        if k is None:
+            continue
+        piece = poly.intersection(cell).buffer(0)
+        others = [o for i, o in enumerate(seeds) if i != k]
+        nearest = min(others, key=lambda o: np.hypot(*(o - seeds[k])))
+        d = nearest - seeds[k]
+        for q in getattr(piece, "geoms", [piece]):
+            if q.geom_type == "Polygon" and q.area > 4:
+                out.append((Polygon(q.exterior), along_wall(float(np.arctan2(d[1], d[0])))))
+    # A sliver left over at a corner goes to the house it shares the longest wall with.
+    big = [o for o in out if o[0].area >= 16]
+    for q, _ in [o for o in out if o[0].area < 16]:
+        if not big:
+            break
+        k = max(range(len(big)), key=lambda i: big[i][0].buffer(0.05).intersection(q.buffer(0.05)).area)
+        merged = big[k][0].union(q.buffer(0.02)).buffer(0)
+        if merged.geom_type == "Polygon":
+            big[k] = (Polygon(merged.exterior), big[k][1])
+    return (big or [(poly, None)]), count
+
+
 def lean(surfaces, m, base):
     """A building on a slope that is no terrace: tilt it with the ground, so the uphill end does not sink into the
     hill and the downhill end does not stand on stilts. The walls stay upright; eaves and ridge follow the slope."""
@@ -397,7 +479,7 @@ def gabled(poly, base, eave, ridge, axis):
     return out
 
 
-def hipped(poly, base, eave, ridge):
+def hipped(poly, base, eave, ridge, pitch=None):
     """Walls to the eaves, then the roof rises inward from every side: right for an L, a T or a courtyard block,
     where no single ridge fits. The roof is built in bands, like contour lines: the outline shrunk a metre or so at a
     time, each band a little higher than the last. A narrow wing runs out of bands early and gets a lower ridge of
@@ -412,6 +494,8 @@ def hipped(poly, base, eave, ridge):
             lo = mid
     if lo < 1.0:
         return None
+    if pitch:
+        ridge = min(ridge, eave + 0.72 * lo * pitch)
     parts = lambda g: [q for q in getattr(g, "geoms", [g]) if q.geom_type == "Polygon" and q.area > 0.3]
     lift = lambda r, z: np.column_stack([r, np.full(len(r), z)])
     out = [s for s in extrude([open_ring(outer.exterior)], base, eave) if s[0] == 1]
@@ -431,8 +515,76 @@ def hipped(poly, base, eave, ridge):
     return out
 
 
+def emit_lidar(verts, res, pieces, floor):
+    """The triangles of a lidar roof (scripts/roofs.py) into the vertex list. Each roof cell and wall goes to the
+    house of the block it is nearest to, so every house keeps its own wall colour."""
+    import shapely
+
+    roof, roof_at, walls, wall_u, wall_at, _ = res
+    tree = STRtree([q for _, q in pieces])
+    ids = np.array([bi for bi, _ in pieces])
+    owner = lambda at: ids[tree.nearest(shapely.points(at))]
+
+    def rows(tris, uv, kind, bi):
+        n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+        n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+        if kind == 2:
+            n[n[:, 2] < 0] *= -1
+        local = np.stack([tris[..., 0] - CX, tris[..., 2], CY - tris[..., 1]], -1)
+        normal = np.repeat(np.stack([n[:, 0], n[:, 2], -n[:, 1]], -1)[:, None, :], 3, axis=1)
+        tail = np.concatenate([np.full(local.shape[:2] + (1,), kind), np.repeat(bi[:, None, None].astype(float), 3, axis=1), np.full(local.shape[:2] + (2,), -1.0)], -1)
+        verts.append(np.concatenate([local, normal, uv, tail], -1).reshape(-1, COLS))
+
+    rows(roof, roof[..., :2] - [CX, CY], 2, owner(roof_at))
+    if len(walls):
+        uv = np.stack([wall_u, walls[..., 2] - floor], -1)  # along the wall, and height above the floor
+        bi = owner(wall_at)
+        for a in ([0, 1, 2], [0, 2, 3]):
+            rows(walls[:, a], uv[:, a], 1, bi)
+
+
+def farmyards():
+    """Farmyards and works in OpenStreetMap: a large building there is a barn or a shed, anywhere else it is a row of
+    houses, a shop, a school or a hall."""
+    from shapely.ops import unary_union
+
+    from geo import wgs_to_grid
+
+    path = RAW / "osm_land.json"
+    polys = []
+    for el in json.loads(path.read_text())["elements"] if path.exists() else []:
+        if el.get("tags", {}).get("landuse") in ("farmyard", "industrial") and len(el.get("geometry", [])) >= 4:
+            q = Polygon([wgs_to_grid(g["lat"], g["lon"]) for g in el["geometry"]]).buffer(0)
+            if not q.is_empty:
+                polys.append(q.buffer(12))
+    return unary_union(polys) if polys else Polygon()
+
+
+def standard(m, poly, exempt, along=None):
+    """Height of the eaves and rise of the roof (metres above the floor) for an ordinary building: storeys from the
+    lidar, the roof at one pitch."""
+    ridge = float(np.clip(m["ridge"], 2.4, 40.0))
+    half = 0.5 * m.get("short", 8.0)
+    if along is not None:
+        # A house in a row: the roof spans the house from front to back, across the row.
+        ring = np.array(poly.exterior.coords)
+        across = ring @ np.array([-np.sin(along), np.cos(along)])
+        half = 0.5 * float(across.max() - across.min())
+    pitched = m["rise"] >= 0.7 or (m["cells"] < 30 and poly.area > 30 and ridge > 3.6)
+    rise = min(half * PITCH, MAX_RISE) if pitched else 0.0
+    if exempt:
+        measured = min(m["rise"], ridge - 2.0, half * 0.85, 5.0)
+        return ridge - measured, measured
+    eave = ridge - rise
+    storeys = 0 if eave < 3.9 else 1 if eave < 6.6 else 2
+    if ridge < 3.3:
+        return max(2.2, ridge), 0.0  # a garage, a shed, a lean-to
+    return EAVES[storeys], rise
+
+
 def main():
     write_area()
+    farm = farmyards()
     dtm, dsm = np.load(BUILD / "dtm.npy"), np.load(BUILD / "dsm.npy")
     sea = np.load(BUILD / "sea.npy")
     landmarks = json.loads((BUILD / "landmarks.json").read_text()) if (BUILD / "landmarks.json").exists() else {}
@@ -440,9 +592,33 @@ def main():
     verts, meta, footprints = [], [], []
     shapes = Counter()
     outlines = []
+    tree, pts = load_addresses()
     for pid, poly, tags in load_outlines():
-        pieces = [poly] if pid in named else steps(poly, dtm)
-        outlines += [(pid if k == 0 else f"{pid}-s{k}", q, tags) for k, q in enumerate(pieces)]
+        if pid in named:
+            outlines.append((pid, poly, tags))
+            continue
+        row, count = houses(poly, tree, pts)
+        shapes["rows cut into houses"] += len(row) > 1
+        for k, (q, along) in enumerate(row):
+            more = {"block": pid, "addresses": count if len(row) == 1 else 1}
+            if along is not None:
+                more["ridge"] = along
+            # Without address points (or with one address), a long outline on a slope is still cut into steps.
+            pieces = steps(q, dtm) if len(row) == 1 else [q]
+            outlines += [(f"{pid}-{k}-{j}" if (k or j) else pid, piece, {**tags, **more}) for j, piece in enumerate(pieces)]
+    # The real roof from the lidar for every ordinary block: scripts/roofs.py. Landmarks and churches keep the roof
+    # built for them, and where the lidar shows nothing (a house newer than the survey) a standard roof stands in.
+    lidar = {}
+    for pid, poly, tags in load_outlines():
+        if pid in named or tags.get("building") in ("church", "chapel") or tags.get("amenity") == "place_of_worship":
+            continue
+        bm = measure(poly, dtm, dsm)
+        if bm is None or bm["ridge"] < 1.5:
+            continue
+        res = lidar_roof(poly, dtm, dsm, bm["floor"], max_height=14.0)
+        if res is not None:
+            lidar[pid] = {"res": res, "floor": bm["floor"], "pieces": []}
+    shapes["roofs from the lidar"] = len(lidar)
     for pid, poly, tags in outlines:
         m = measure(poly, dtm, dsm)
         if m is None or sea[int(np.clip((YMAX - poly.centroid.y) / LIDAR_RES, 0, sea.shape[0] - 1)), int(np.clip((poly.centroid.x - XMIN) / LIDAR_RES, 0, sea.shape[1] - 1))]:
@@ -450,26 +626,23 @@ def main():
         lm = named.get(pid)
         ring = open_ring(poly.exterior)
         floor, base = m["floor"], max(m["low"] - 0.4, m["floor"] - 7.0)
-        height = float(np.clip(m["ridge"], 2.4, 40.0))
         if m["ridge"] < 1.5:
             # Nothing stands here in the lidar: demolished, not yet built when the survey flew, or a roofless ruin.
             if not lm and not tags.get("name"):
                 continue
-            height = 3.0
-        rise = min(m["rise"], height - 2.0)
-        # A tree that hangs over a roof reads as a roof 15 m high. Few roofs here are steeper than 40 degrees, and an
-        # ordinary house has walls of two storeys, a large building of three.
-        rise = min(rise, 0.5 * m.get("short", 8.0) * 0.85, 5.0)
-        walls = 6.5 if poly.area < 180 else 8.5
+            m["ridge"], m["rise"] = 3.0, 0.0
         church = tags.get("building") in ("church", "chapel") or tags.get("amenity") == "place_of_worship"
-        if height - rise > walls and not (tags.get("building:levels") or church or lm):
-            height = walls + rise
+        on_farm = farm.intersects(poly.centroid)
+        # A tree that hangs over a roof reads as a roof 15 m high, and no two houses measure alike: see EAVES.
+        eave, rise = standard(m, poly, exempt=bool(church or lm or (on_farm and poly.area > 260)), along=tags.get("ridge"))
+        height = eave + rise
         kind = "house"
-        if poly.area > 260 and height < 9.5:
+        if poly.area > 260 and on_farm and height < 9.5:
             kind = "barn"
-        elif poly.area < 22 or height < 3.0:
-            kind = "shed"
-        if tags.get("building") in ("church", "chapel") or tags.get("amenity") == "place_of_worship":
+        elif poly.area < 22 or height < 3.3 or (tags.get("addresses") == 0 and poly.area < 60 and not tags.get("building") in ("house", "residential", "detached", "terrace")):
+            # Small, low, or nobody's address: a garage, a garden shed, a store.
+            kind = "shed" if on_farm else "outbuilding"
+        if church:
             kind = "church"
         if lm:
             kind = lm["style"]
@@ -479,17 +652,23 @@ def main():
             rise = 0.0
         bi = len(meta)
         surfaces = None
+        real = lidar.get(tags.get("block"))
+        if real is not None:
+            real["pieces"].append((bi, poly))
+            surfaces, shape_name = [], "lidar"
         simple = m.get("fill", 0) > 0.78 and not poly.interiors
-        if rise >= 0.7 and m["axis"] is not None and simple:
-            surfaces = gabled(poly, base, floor + height - rise, floor + height, m["axis"])
+        if surfaces is None and rise >= 0.7 and simple:
+            # The lidar says which way the ridge runs when it can; otherwise along the long side, as most do.
+            ridge_axis = tags["ridge"] if "ridge" in tags else m["axis"] if m["axis"] is not None else long_side(poly)
+            surfaces = gabled(poly, base, floor + height - rise, floor + height, ridge_axis)
             shape_name = "gabled"
         if surfaces is None and rise >= 0.7:
-            surfaces = hipped(poly, base, floor + height - rise, floor + height)
+            surfaces = hipped(poly, base, floor + height - rise, floor + height, None if (church or lm) else PITCH)
             shape_name = "hipped"
         if surfaces is None:
             surfaces = flat_roof(poly, base, floor + height)
             shape_name = "flat"
-        if m["drop"] > 1.5:
+        if m["drop"] > 1.5 and real is None:
             surfaces = lean(surfaces, m, base)
             shapes["on a slope"] += 1
         shapes[shape_name] += 1
@@ -507,14 +686,21 @@ def main():
             "height": round(height, 2),
             "ground": round(floor, 2),
             "roof_rgb": None,
-            "roof_fixed": list(pick(ROOFS_BARN if kind in ("barn", "shed") else ROOFS_HOUSE, stable_rand(pid, "roof"))),
+            # One roof colour for a whole row: the houses of a terrace were roofed together.
+            "roof_fixed": list(pick(ROOFS_BARN if kind in ("barn", "shed") else ROOFS_HOUSE, stable_rand(tags.get("block", pid), "roof"))),
             "rand": round(rand, 4),
         })
+        if kind in ("house", "outbuilding"):
+            # The eaves: no window is drawn above them.
+            meta[-1]["param"] = round(height - rise if real is None else max(2.4, real["res"][5] - (floor - real["floor"])), 2)
         if lm:
             meta[-1].update({"name": lm["name"], "wall_fixed": lm.get("wall"), "frame_fixed": lm.get("frame")})
             if lm.get("roof"):
                 meta[-1]["roof_fixed"] = lm["roof"]
             add_landmark_parts(verts, meta, pid, lm, floor, meta[-1]["axis"], roof_tris)
+    for real in lidar.values():
+        if real["pieces"]:
+            emit_lidar(verts, real["res"], real["pieces"], real["floor"])
     # Structures with no outline on any map (a lone mine stack): built from scripts/landmarks.py alone.
     for extra in landmarks.get("structures", []):
         g = ground_at(dtm, extra["x"], extra["y"])
