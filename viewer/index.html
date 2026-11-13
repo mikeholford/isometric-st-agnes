@@ -286,6 +286,10 @@
   }
   body.tour #make, body:has(#info:not([hidden])) #make, body:has(#bolster:not([hidden])) #make { display: none; }
   #map.over-bolster { cursor: pointer; }
+  #bolster-rumour { font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+  #bolster-tally { font-size: 12px; color: var(--peat); }
+  #bolster .card-head { letter-spacing: 0.01em; font-weight: 500; flex-wrap: wrap; gap: 4px 12px; }
+  #bolster .src { margin: 0; }
   #make-dialog {
     width: min(640px, calc(100vw - 32px));
     max-height: calc(100vh - 48px);
@@ -361,6 +365,8 @@
     <h1>St Agnes</h1>
     <button type="button" id="intro-toggle" aria-expanded="true" aria-controls="intro-body" aria-label="Show or hide the menu"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 5l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
+  <p id="bolster-rumour" hidden></p>
+  <p id="bolster-tally" hidden></p>
   <div id="intro-body">
   <p>The mining village on the north coast of Cornwall in miniature, from Chapel Porth and Wheal Coates over the Beacon to Trevaunance Cove.</p>
   <p class="long">Every house, every hedge and every tree stands in its real place, and the land has its real shape, rebuilt from open maps and laser height measurements. Scroll or pinch to zoom, or look up a street or place below. Point at a road to see its name. Hold ⌘ (or Ctrl) and drag to turn the map.</p>
@@ -393,6 +399,7 @@
   <button type="button" id="zoom-home" aria-label="Back to the starting point">⌂</button>
   <button type="button" id="turn" aria-label="Turn the map a quarter" title="Turn (or hold ⌘ / Ctrl and drag)" hidden><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><g id="needle"><path d="M9 2.6l2.3 6.4H6.7z" fill="currentColor"/><path d="M9 15.4l2.3-6.4H6.7z" fill="currentColor" opacity=".35"/></g></svg></button>
   <button type="button" id="music" aria-label="Music on or off" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M6.6 13.2V4.3l8-1.8v9.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><ellipse cx="4.6" cy="13.3" rx="2.1" ry="1.7" fill="currentColor"/><ellipse cx="12.6" cy="11.8" rx="2.1" ry="1.7" fill="currentColor"/></svg></button>
+  <button type="button" id="steps" aria-label="Footsteps on or off" aria-pressed="false" title="Footsteps, when you are close"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><ellipse cx="7.2" cy="6.2" rx="2.1" ry="2.7" transform="rotate(-28 7.2 6.2)" fill="currentColor"/><ellipse cx="11.4" cy="12.2" rx="2.1" ry="2.7" transform="rotate(-28 11.4 12.2)" fill="currentColor"/></svg></button>
   <button type="button" id="evening" aria-label="Evening on or off" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><mask id="moon-cut"><rect width="18" height="18" fill="#fff"/><circle cx="12.4" cy="6" r="5.2" fill="#000"/></mask><circle cx="8.6" cy="9.6" r="6.2" fill="currentColor" mask="url(#moon-cut)"/><circle cx="14.2" cy="12.4" r=".9" fill="currentColor" opacity=".7"/></svg></button>
 </div>
 
@@ -451,12 +458,14 @@ Work step by step, check the licences of the data you use, and ask me about the 
 </section>
 
 <section id="bolster" class="card" hidden aria-live="polite" aria-label="Bolster the giant">
-  <div class="card-head"><span>BOLSTER THE GIANT</span><span id="bolster-count"></span></div>
+  <div class="card-head"><span>Bolster the giant</span><span id="bolster-count"></span></div>
   <h2 id="bolster-title"></h2>
   <p id="bolster-where"></p>
   <p id="bolster-text"></p>
+  <p id="bolster-lore"></p>
+  <p class="src" id="bolster-src"></p>
   <nav>
-    <button type="button" id="bolster-copy">Copy the link to this find</button>
+    <button type="button" id="bolster-copy">Copy a note of this find</button>
     <button type="button" class="close" id="bolster-close">Close</button>
   </nav>
 </section>
@@ -1344,7 +1353,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     truck: { half: 7.6, sort: true, boxes: [[-7.4, 7.4, 1.2, 0.45, 1.05, 'dark'], [-7.4, 5.0, 1.25, 1.05, 3.9, 'load'], [5.3, 7.6, 1.22, 0.55, 3.15, 'cab']] },
     bike: { half: 0.9, bike: true, boxes: [[-0.85, 0.85, 0.05, 0.3, 0.75, 'dark'], [-0.32, 0.14, 0.2, 0.8, 1.42, 'body'], [-0.12, 0.08, 0.1, 1.42, 1.66, 'load']] },
   };
-  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, GIANT = 4, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
+  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, GIANT = 4, GULL = 5, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
   let lanes = [], movers = [], layer = null, off = null;
   const outs = new Map(), entries = { car: {}, bike: [], walk: [] };
   let exits = new Set();
@@ -1548,8 +1557,19 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
 
   function stepBirds(dt) {
+    const g = bolsterShown;
     for (const f of flocks) {
+      if (f.baseH == null) f.baseH = f.h, f.baseV = f.v;
+      let scare = 0, ax = 0, az = 0;
+      if (g) {
+        const dx = f.x - g.x, dz = f.z - g.z, dist = Math.hypot(dx, dz) || 1;
+        if (dist < 80) scare = (80 - dist) / 80, ax = dx / dist, az = dz / dist;
+      }
+      f.scare = scare;
+      const vx = f.dx * f.baseV + ax * 16 * scare, vz = f.dz * f.baseV + az * 16 * scare, sp = Math.hypot(vx, vz) || 1;
+      f.dx = vx / sp, f.dz = vz / sp, f.v = sp;
       f.x += f.dx * f.v * dt, f.z += f.dz * f.v * dt, f.left -= f.v * dt, f.t += dt;
+      f.h += (f.baseH + scare * (f.geese ? 18 : 14) - f.h) * Math.min(1, dt * 1.6);
     }
     for (let i = flocks.length - 1; i >= 0; i--) if (flocks[i].left < 0) flocks.splice(i, 1);
     if ((nextFlock -= dt) <= 0) {
@@ -1634,6 +1654,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   function drawMover(ctx, m, x, z, dx, dz) {
     if (m.mode === WALK) return drawWalker(ctx, m, x, z, dx, dz);
     if (m.mode === SWIM) return drawDippers(ctx, m);
+    if (m.mode === GULL) return drawGull(ctx, m, x, z);
     if (m.mode === GIANT) return drawBolster(ctx, m, x, z, dx, dz);
     const V = VEHICLES[m.type];
     drawBoxes(ctx, x, z, dx, dz, V.boxes, (role) => (role === 'dark' ? DARK : role === 'load' ? m.load : m.paint), { sort: V.sort, outline: !V.bike });
@@ -1727,9 +1748,15 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // Bolster, the giant of St Agnes. He is always out walking somewhere on the map, and everyone who looks sees him
   // in the same place: where he is follows from the time alone. The day is cut into legs of twenty minutes. Each leg
   // has a number (minutes since 1970 divided by twenty), and that number seeds the dice that pick the road or path
-  // he starts on and every turn he takes. So the time of a find is proof of the place, and a link with the time in
-  // it shows anyone where he was. Click him and he is gone for you until his next leg starts somewhere else.
+  // he starts on and every turn he takes. A second dice, used only for his pauses, does not touch that route, so an
+  // old link still names the same roads. His pace does change with the slope, so the same link now puts him where
+  // this walk would have put him, not where a flat 1.9 metres a second would have. The weather and the tide never
+  // move him: a visitor offline and a visitor online still see one giant.
   const LEG = 20 * 60, STRIDE = 1.9, TALL = 6.4; // seconds, metres a second, metres
+  // A person's hip is about 0.92 m up, and he is 6.4 / 1.72 times that person. The leg that swings is a pendulum:
+  // a full swing and back takes 2π√(L/g), and one step is half of that, a heavy step of a little under two seconds.
+  const G_ACC = 9.81, LEG_LEN = TALL * (0.92 / 1.72);
+  const SWING_T = 2 * Math.PI * Math.sqrt(LEG_LEN / G_ACC), STEP_T = SWING_T / 2;
   const dice = (seed) => () => { // mulberry32: the same numbers in every browser
     let t = (seed += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -1742,6 +1769,11 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (legs.has(n)) return legs.get(n);
     walkable ||= lanes.map((l, i) => i).filter((i) => lanes[i].ww > 0 && lanes[i].len > 5);
     const rnd = dice(n), route = [], cum = [0];
+    if (!walkable.length) {
+      const empty = { n, route, cum };
+      legs.set(n, empty);
+      return empty;
+    }
     let li = walkable[Math.floor(rnd() * walkable.length)];
     while (cum[cum.length - 1] < LEG * STRIDE + 50 && route.length < 2000) {
       route.push(li);
@@ -1753,43 +1785,692 @@ Work step by step, check the licences of the data you use, and ask me about the 
       else li = from[Math.floor(rnd() * from.length)];
     }
     if (legs.size > 8) legs.clear();
-    legs.set(n, { route, cum });
-    return legs.get(n);
+    const leg = { n, route, cum };
+    legs.set(n, leg);
+    return leg;
   }
-  // Where he is at a time (seconds since 1970), or null before the roads are loaded.
-  function bolsterAt(t) {
-    if (!lanes.length) return null;
-    const n = Math.floor(t / LEG), since = t - n * LEG, { route, cum } = bolsterLeg(n), d = since * STRIDE;
-    let k = 0;
-    while (k < route.length - 1 && cum[k + 1] < d) k++;
-    const l = lanes[route[k]], s = Math.min(l.len, d - cum[k]);
+
+  // The sun at St Agnes (50.31° N, 5.20° W), from the hour angle. Azimuth is clockwise from north. Everyone shares
+  // this sun, because it is worked from UTC and the longitude, not from the clock of the browser.
+  let sunCache = null;
+  function sunAt(ms) {
+    const minute = Math.floor(ms / 60000);
+    if (sunCache && sunCache.minute === minute) return sunCache;
+    const lat = 50.31 * Math.PI / 180, lon = -5.20, d = new Date(ms);
+    const day = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - Date.UTC(d.getUTCFullYear(), 0, 0)) / 86400000;
+    const frac = d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600;
+    const gamma = (2 * Math.PI / 365) * (day - 1 + (frac - 12) / 24);
+    const eqtime = 229.18 * (0.000075 + 0.001868 * Math.cos(gamma) - 0.032077 * Math.sin(gamma) - 0.014615 * Math.cos(2 * gamma) - 0.040849 * Math.sin(2 * gamma));
+    const decl = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma) - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma) - 0.002697 * Math.cos(3 * gamma) + 0.00148 * Math.sin(3 * gamma);
+    let ha = ((frac * 60 + eqtime + 4 * lon) / 4) - 180;
+    ha = ((ha + 540) % 360) - 180;
+    const haR = ha * Math.PI / 180;
+    const cosZen = Math.sin(lat) * Math.sin(decl) + Math.cos(lat) * Math.cos(decl) * Math.cos(haR);
+    const zen = Math.acos(Math.max(-1, Math.min(1, cosZen)));
+    const alt = Math.PI / 2 - zen;
+    let az = Math.atan2(Math.sin(haR), Math.cos(haR) * Math.sin(lat) - Math.tan(decl) * Math.cos(lat));
+    az = (az + Math.PI) % (2 * Math.PI);
+    if (az < 0) az += 2 * Math.PI;
+    const up = Math.sin(alt), horiz = Math.cos(alt);
+    const sun = { minute, alt, az, up, x: Math.sin(az) * horiz, z: -Math.cos(az) * horiz };
+    if (Math.abs(ms - Date.now()) < 120000) sunCache = sun;
+    return sun;
+  }
+  const sunNow = () => sunAt(Date.now());
+
+  // Wind and rain from Open-Meteo, and the tide from its marine forecast when that answers. Neither is allowed to
+  // change where he stands. If the forecast does not arrive, the air is calm and dry and the tide is the harmonic
+  // below: M2 and S2, sized so a spring tide reaches toward the 3.2 m MHWS of this coast. That is an approximation,
+  // not a published prediction.
+  let sky = { wind: 0, wx: 1, wz: 0, wet: 0, rain: false, tideTimes: null, tideVals: null, tideSource: 'harmonic' };
+  const RAIN_CODES = new Set([51, 53, 55, 61, 63, 65, 80, 81, 82, 95, 96, 99]);
+  function tideHarmonic(ms) {
+    const hours = ms / 3600000;
+    return 2.05 * Math.cos((2 * Math.PI / 12.4206012) * (hours - 3.2)) + 0.72 * Math.cos((2 * Math.PI / 12) * (hours - 1.1));
+  }
+  function tideAt(ms) {
+    const times = sky.tideTimes, vals = sky.tideVals;
+    if (!times || times.length < 2) return tideHarmonic(ms);
+    if (ms <= times[0]) return vals[0];
+    if (ms >= times[times.length - 1]) return vals[vals.length - 1];
+    let lo = 0, hi = times.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (times[mid] <= ms) lo = mid; else hi = mid;
+    }
+    const u = (ms - times[lo]) / (times[hi] - times[lo] || 1);
+    return vals[lo] + (vals[hi] - vals[lo]) * u;
+  }
+  async function loadSky() {
+    try {
+      const w = await fetch('https://api.open-meteo.com/v1/forecast?latitude=50.31&longitude=-5.20&current=wind_speed_10m,wind_direction_10m,precipitation,rain,weather_code&wind_speed_unit=ms');
+      if (w.ok) {
+        const c = (await w.json()).current || {};
+        const to = (((c.wind_direction_10m || 0) * Math.PI) / 180) + Math.PI;
+        sky.wind = c.wind_speed_10m || 0;
+        sky.wx = Math.sin(to);
+        sky.wz = -Math.cos(to);
+        const rainy = RAIN_CODES.has(c.weather_code || 0) || (c.rain || 0) > 0 || (c.precipitation || 0) > 0.1;
+        sky.rain = rainy;
+        sky.wet = rainy ? Math.min(1, 0.55 + (c.rain || c.precipitation || 0.2) * 0.25) : 0;
+      }
+    } catch { /* calm and dry, and he still walks */ }
+    try {
+      const m = await fetch('https://marine-api.open-meteo.com/v1/marine?latitude=50.31&longitude=-5.20&hourly=sea_level_height_msl&forecast_days=1&timezone=GMT');
+      if (m.ok) {
+        const j = await m.json();
+        const times = j.hourly && j.hourly.time, vals = j.hourly && j.hourly.sea_level_height_msl;
+        if (times && vals && times.length > 1 && vals.some((v) => v != null)) {
+          sky.tideTimes = times.map((s) => Date.parse(String(s).endsWith('Z') ? s : `${s}Z`));
+          sky.tideVals = vals.map((v) => v == null ? 0 : v);
+          sky.tideSource = 'open-meteo';
+        }
+      }
+    } catch { /* the harmonic tide stays */ }
+  }
+  loadSky();
+  setInterval(loadSky, 15 * 60 * 1000);
+
+  // Uphill he leans in and shortens the step, so he is slower. Downhill the step shortens too and he waits longer
+  // on the planted foot, which keeps him under the 1.9 metres a second he walks on the flat.
+  const gradeUp = (g) => Math.max(0, g), gradeDown = (g) => Math.max(0, -g);
+  function leanOf(grade) {
+    return Math.max(-0.34, Math.min(0.45, gradeUp(grade) * 1.05 - gradeDown(grade) * 0.72));
+  }
+  function stepLen(grade) {
+    return Math.max(0.8, (STRIDE * STEP_T) / (1 + 3.2 * gradeUp(grade)) / (1 + 1.6 * gradeDown(grade)));
+  }
+  function paceOf(grade) {
+    return Math.max(0.34, Math.min(STRIDE, stepLen(grade) / (STEP_T * (1 + 1.1 * gradeDown(grade)))));
+  }
+  function groundKind(lane, x, z) {
+    const a = `${lane && lane.a || ''}`, b = `${lane && lane.b || ''}`;
+    const h = heightAt(x, z);
+    const soft = lane && (lane.c === 'footway' || lane.c === 'path' || lane.c === 'track' || lane.c === 'bridleway');
+    const named = a.includes('sand') || b.includes('sand');
+    // A named beach, or a path that is actually down at the sand. A path that only starts on the beach
+    // and then climbs is grass once the ground rises.
+    if ((named && h < 2.4 && h > -1.2) || (a.includes('sand') && b.includes('sand'))) return 'sand';
+    if (soft && h < 1.2 && h > -1.2) return 'sand';
+    if (soft) return 'grass';
+    return 'hard';
+  }
+  function routeIndex(cum, d) {
+    let lo = 0, hi = cum.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] <= d) lo = mid; else hi = mid;
+    }
+    return Math.min(lo, cum.length - 2);
+  }
+  function pointAt(route, cum, d) {
+    const end = cum[cum.length - 1] || 0;
+    d = Math.max(0, Math.min(d, end));
+    const k = route.length ? routeIndex(cum, d) : 0;
+    const l = lanes[route[k]];
+    if (!l || !l.p || l.p.length < 2) return { d, lane: l, s: 0, x: 0, z: 0, dx: 1, dz: 0 };
+    const s = Math.min(l.len, Math.max(0, d - cum[k]));
     let i = 0;
     while (i < l.cum.length - 2 && l.cum[i + 1] < s) i++;
-    const a = l.p[i], b = l.p[i + 1], seg = l.cum[i + 1] - l.cum[i] || 1, f = (s - l.cum[i]) / seg;
-    return { n, since, lane: l, s, x: a[0] + (b[0] - a[0]) * f, z: a[1] + (b[1] - a[1]) * f, dx: (b[0] - a[0]) / seg, dz: (b[1] - a[1]) / seg };
+    const a = l.p[i], b = l.p[Math.min(l.p.length - 1, i + 1)];
+    const seg = (l.cum[i + 1] - l.cum[i]) || 1, f = Math.max(0, Math.min(1, (s - l.cum[i]) / seg));
+    return { d, lane: l, s, x: a[0] + (b[0] - a[0]) * f, z: a[1] + (b[1] - a[1]) * f, dx: (b[0] - a[0]) / seg, dz: (b[1] - a[1]) / seg };
   }
+  function sampleAt(raw, d) {
+    let lo = 0, hi = raw.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (raw[mid].d <= d) lo = mid; else hi = mid;
+    }
+    return raw[lo];
+  }
+  function walkOf(leg) {
+    const { route, cum, n } = leg;
+    const total = cum[cum.length - 1] || 0;
+    const raw = [];
+    for (let d = 0; d <= total; d += 4) raw.push(pointAt(route, cum, d));
+    if (!raw.length || raw[raw.length - 1].d < total - 0.4) raw.push(pointAt(route, cum, total));
+    if (raw.length < 2) raw.push({ ...raw[0], d: (raw[0].d || 0) + 4 });
+    for (let i = 0; i < raw.length; i++) {
+      const a = raw[Math.max(0, i - 1)], b = raw[Math.min(raw.length - 1, i + 1)];
+      const dd = b.d - a.d || 1;
+      raw[i].grade = (heightAt(b.x, b.z) - heightAt(a.x, a.z)) / dd;
+      raw[i].kind = groundKind(raw[i].lane, raw[i].x, raw[i].z);
+      raw[i].speed = paceOf(raw[i].grade);
+    }
+    const plants = [];
+    let d = 0, side = 1;
+    const end = Math.max(4, total);
+    while (d < end - 0.4 && plants.length < 900) {
+      const here = pointAt(route, cum, d);
+      const grade = sampleAt(raw, d).grade || 0;
+      const sl = stepLen(grade);
+      const foot = pointAt(route, cum, Math.min(end, d + sl * 0.5));
+      const lat = side * 0.55;
+      plants.push({
+        hip0: d, hip1: Math.min(end, d + sl), sl, side, grade,
+        x: foot.x - foot.dz * lat, z: foot.z + foot.dx * lat,
+        dx: foot.dx, dz: foot.dz, kind: groundKind(foot.lane, foot.x, foot.z),
+      });
+      d += sl;
+      side = -side;
+    }
+    if (!plants.length) plants.push({ hip0: 0, hip1: 4, sl: 4, side: 1, grade: 0, x: 0.5, z: 0, dx: 1, dz: 0, kind: 'hard' });
+    const pr = dice((Math.imul(n, 0x85ebca6b) + 0x6d2b79f5) >>> 0);
+    const nP = 2 + Math.floor(pr() * 2), pauses = [], used = new Set();
+    for (let i = 0; i < nP; i++) {
+      const guess = ((i + 0.35 + pr() * 0.3) / nP) * Math.min(end, STRIDE * LEG) * 0.86;
+      let best = plants[0], bd = Infinity;
+      for (const p of plants) {
+        const dd = Math.abs(p.hip0 - guess);
+        if (dd < bd) bd = dd, best = p;
+      }
+      const key = Math.round(best.hip0 * 10);
+      if (used.has(key)) continue;
+      used.add(key);
+      pauses.push({ d: best.hip0, hold: 8 + pr() * 8 });
+    }
+    pauses.sort((a, b) => a.d - b.d);
+    const events = [{ d: raw[0].d, t: 0 }];
+    let t = 0, pi = 0;
+    for (let i = 0; i < raw.length - 1; i++) {
+      const d1 = raw[i + 1].d, spd = Math.max(0.32, raw[i].speed);
+      while (pi < pauses.length && pauses[pi].d <= d1 + 1e-6) {
+        const pd = pauses[pi].d, last = events[events.length - 1];
+        if (pd > last.d + 0.01) {
+          t += (pd - last.d) / spd;
+          events.push({ d: pd, t });
+        }
+        t += pauses[pi].hold;
+        events.push({ d: events[events.length - 1].d, t });
+        pi++;
+      }
+      const last = events[events.length - 1];
+      if (d1 > last.d + 0.01) {
+        t += (d1 - last.d) / spd;
+        events.push({ d: d1, t });
+      }
+    }
+    return { tag: HEIGHTS ? 1 : 0, raw, plants, events };
+  }
+  function walkFor(n) {
+    const leg = bolsterLeg(n);
+    if (!leg.route.length) return null;
+    if (!leg.walk || leg.walk.tag !== (HEIGHTS ? 1 : 0)) leg.walk = walkOf(leg);
+    return leg.walk;
+  }
+  function atTime(events, since) {
+    if (since <= events[0].t) return { d: events[0].d, pause: false, pauseU: 0 };
+    const last = events[events.length - 1];
+    if (since >= last.t) return { d: last.d, pause: false, pauseU: 0 };
+    let lo = 0, hi = events.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (events[mid].t <= since) lo = mid; else hi = mid;
+    }
+    const a = events[lo], b = events[hi], span = b.t - a.t || 1, u = (since - a.t) / span;
+    const pause = Math.abs(b.d - a.d) < 0.02 && span > 1;
+    return { d: a.d + (b.d - a.d) * u, pause, pauseU: pause ? Math.max(0, Math.min(1, u)) : 0 };
+  }
+  function timeOf(events, d) {
+    let lo = 0, hi = events.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (events[mid].d <= d + 1e-6) lo = mid; else hi = mid;
+    }
+    const a = events[lo], b = events[Math.min(events.length - 1, lo + 1)];
+    if (Math.abs(b.d - a.d) < 0.01) return a.t;
+    const u = (d - a.d) / (b.d - a.d || 1);
+    return a.t + (b.t - a.t) * Math.max(0, Math.min(1, u));
+  }
+  function gaitAt(walk, d) {
+    const plants = walk.plants;
+    let lo = 0, hi = plants.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (plants[mid].hip0 <= d + 1e-6) lo = mid; else hi = mid - 1;
+    }
+    const p = plants[lo], span = p.hip1 - p.hip0 || 1;
+    return { plant: p, index: lo, u: Math.max(0, Math.min(1, (d - p.hip0) / span)) };
+  }
+  const smoothStep = (u) => u * u * (3 - 2 * u);
+  function poseAt(t) {
+    if (!lanes.length) return null;
+    const n = Math.floor(t / LEG), since = t - n * LEG, leg = bolsterLeg(n);
+    const walk = walkFor(n);
+    if (!walk) return null;
+    const at = atTime(walk.events, since), gait = gaitAt(walk, at.d), plant = gait.plant;
+    const u = at.pause ? 0 : gait.u;
+    const hipD = plant.hip0 + u * (plant.hip1 - plant.hip0);
+    const hip = pointAt(leg.route, leg.cum, hipD);
+    const sample = sampleAt(walk.raw, hipD);
+    const prev = walk.plants[gait.index - 1];
+    const next = walk.plants[gait.index + 1];
+    const swingFrom = prev ? { x: prev.x, z: prev.z } : { x: plant.x - plant.dx * plant.sl, z: plant.z - plant.dz * plant.sl };
+    const swingTo = next ? { x: next.x, z: next.z } : { x: plant.x + plant.dx * plant.sl, z: plant.z + plant.dz * plant.sl };
+    const su = smoothStep(u);
+    const swingFoot = { x: swingFrom.x + (swingTo.x - swingFrom.x) * su, z: swingFrom.z + (swingTo.z - swingFrom.z) * su };
+    const grade = sample.grade || 0;
+    const flags = coverFlags(hip.lane, hip.s, hip.x, hip.z);
+    let alpha = Math.min(1, since / 2, (LEG - since) / 2);
+    if (!objectsLayer && flags.underTree && !flags.underBuilding) alpha *= 0.55;
+    return {
+      n, since, t, mode: GIANT, alpha, lane: hip.lane, s: hip.s,
+      x: hip.x, z: hip.z, dx: hip.dx || plant.dx, dz: hip.dz || plant.dz,
+      grade, speed: at.pause ? 0 : (sample.speed || paceOf(grade)), lean: leanOf(grade),
+      u, sl: plant.sl, side: plant.side, plantIndex: gait.index, pause: at.pause, pauseU: at.pauseU,
+      moving: !at.pause && since > 0.4 && since < LEG - 0.4,
+      kind: plant.kind, d: at.d, leg: walk, plant,
+      stanceFoot: { x: plant.x, z: plant.z }, swingFoot,
+      underBuilding: flags.underBuilding, underTree: flags.underTree, cover: flags.cover,
+    };
+  }
+  function bolsterAt(t) { return poseAt(t); }
   const bolsterEl = document.getElementById('bolster');
   const unix = () => Date.now() / 1000;
-  let goneLeg = null, bolsterShown = null;
-  try { goneLeg = parseInt(localStorage.getItem('bolster-gone')) || null; } catch {}
-  // The giant as a mover for this frame, or null while he is gone for this visitor.
+  let goneLeg = null, bolsterShown = null, viewK = 1;
+  try { goneLeg = parseInt(localStorage.getItem('bolster-gone'), 10); if (Number.isNaN(goneLeg)) goneLeg = null; } catch { /* private */ }
   function bolsterNow() {
-    const g = bolsterAt(unix());
+    const g = poseAt(unix());
     if (!g || g.n === goneLeg) return (bolsterShown = null);
-    const within = (list) => list && list.some(([a, b]) => g.s >= a - 2 && g.s <= b + 2);
-    // He steps out of thin air when a leg starts and fades as it ends.
-    const alpha = Math.min(1, g.since / 2, (LEG - g.since) / 2);
-    return (bolsterShown = { ...g, mode: GIANT, alpha, behind: within(g.lane.h[laneView]) || within(g.lane.t[laneView]) });
+    maybeThud(g);
+    return (bolsterShown = g);
   }
-  // Is this map pixel on him? A little room around him, more when the map is zoomed far out.
-  function overBolster(p) {
+  // Drawn as the old sources have him. Robert Hunt (1865) gives his size, his great hands and a knife, and George
+  // Cruikshank's drawing in that book a belted tunic to the knee, bare lower legs and no club. The straw beard and
+  // the leaves in his hair nod to the Bolster Festival. The map's own tiles keep their painted sun. He is lit by the
+  // sun of this minute, and by his lantern after dark, so the light agrees with the shadow on the ground.
+  const TUNIC = [136, 98, 58], BELT = [58, 44, 34], FLESH = [214, 170, 136], MANE = [92, 58, 36], STRAW = [216, 188, 122], LEAF = [78, 122, 54], STEEL = [176, 182, 188], EYE = [40, 34, 30], LAMP_TIN = [232, 176, 86];
+  const LORE = [
+    ['He could stand with one foot on St Agnes Beacon and the other on Carn Brea, six miles apart.', 'Robert Hunt, Popular Romances of the West of England, 1865.'],
+    ['In the valley above Chapel Porth a stone was called his finger, where he stooped to drink at the well.', 'Robert Hunt, Popular Romances of the West of England, 1865.'],
+    ['His wife carried stones in her apron up to the Beacon when he was angry.', 'Robert Hunt, Popular Romances of the West of England, 1865.'],
+    ['She asked him to fill a hole in the cliff at Chapel Porth with his blood. The hole opened into the sea, and he bled to death. People point to the red rock as that blood.', 'Robert Hunt, Popular Romances of the West of England, 1865.'],
+    ['The bank of earth called the Bolster once ran from Chapel Coombe to Trevaunance Coombe, and the story ties the giant to that bank.', 'Robert Hunt, Popular Romances of the West of England, 1865.'],
+    ['The name is on record in 1398 as Bothlester, Cornish for a hump like an upturned boat. The giant was written down before 1742.', 'The parish record, as this map tells it, and the writing before 1742.'],
+  ];
+  function lit(rgb, nx, nh, nz) {
+    const sun = sunNow();
+    let lx, lh, lz, fill, lamp;
+    if (sun.up > 0.02) {
+      const len = Math.hypot(sun.x, sun.up, sun.z) || 1;
+      lx = sun.x / len; lh = sun.up / len; lz = sun.z / len;
+      fill = 0.4 + 0.18 * Math.min(1, sun.up);
+      lamp = 0.62;
+    } else {
+      const g = bolsterShown;
+      lx = (g ? g.dx : 0.3) * 0.8; lh = 0.66; lz = (g ? g.dz : 0.2) * 0.8;
+      const len = Math.hypot(lx, lh, lz) || 1;
+      lx /= len; lh /= len; lz /= len;
+      fill = 0.36; lamp = 0.74;
+    }
+    const k = Math.min(1.22, fill + lamp * Math.max(0, nx * lx + nh * lh + nz * lz));
+    const wet = sky.wet || 0;
+    return `rgb(${rgb[0] * k * (1 - 0.3 * wet) | 0},${rgb[1] * k * (1 - 0.26 * wet) | 0},${rgb[2] * k * (1 - 0.05 * wet) | 0})`;
+  }
+  function cross3(a, b) {
+    return { x: a.h * b.z - a.z * b.h, h: a.z * b.x - a.x * b.z, z: a.x * b.h - a.h * b.x };
+  }
+  function pxAbs(p) { return toPx(p.x, p.z, p.abs - heightAt(p.x, p.z)); }
+  function clipEnd(p, q, floor) {
+    if (p.abs >= floor) return p;
+    if (q.abs <= floor) return null;
+    const u = (floor - p.abs) / (q.abs - p.abs);
+    return { x: p.x + (q.x - p.x) * u, z: p.z + (q.z - p.z) * u, abs: floor };
+  }
+  function bone(ctx, a, b, rx, ry, rgb, floor) {
+    if (!a || !b) return;
+    let a0 = a, b0 = b;
+    if (floor != null) {
+      if (a.abs < floor && b.abs < floor) return;
+      if (a.abs < floor) a0 = clipEnd(a, b, floor);
+      if (b.abs < floor) b0 = clipEnd(b, a, floor);
+      if (!a0 || !b0) return;
+    }
+    let ux = b0.x - a0.x, uh = b0.abs - a0.abs, uz = b0.z - a0.z;
+    const len = Math.hypot(ux, uh, uz);
+    if (len < 0.015) return;
+    ux /= len; uh /= len; uz /= len;
+    let rxx = uz, rh = 0, rz = -ux, rl = Math.hypot(rxx, rz);
+    if (rl < 0.2) { rxx = 1; rh = 0; rz = 0; rl = 1; }
+    rxx /= rl; rh /= rl; rz /= rl;
+    let sx = uh * rz - uz * rh, sh = uz * rxx - ux * rz, sz = ux * rh - uh * rxx;
+    const sln = Math.hypot(sx, sh, sz) || 1;
+    sx /= sln; sh /= sln; sz /= sln;
+    const corner = (end, sr, ss) => {
+      const o = end ? b0 : a0;
+      return { x: o.x + rxx * sr * rx + sx * ss * ry, z: o.z + rz * sr * rx + sz * ss * ry, abs: o.abs + rh * sr * rx + sh * ss * ry };
+    };
+    const faces = [
+      [[1, -1, -1], [1, 1, -1], [1, 1, 1], [1, -1, 1], ux, uh, uz],
+      [[0, -1, -1], [0, -1, 1], [0, 1, 1], [0, 1, -1], -ux, -uh, -uz],
+      [[0, 1, -1], [1, 1, -1], [1, 1, 1], [0, 1, 1], rxx, rh, rz],
+      [[0, -1, -1], [0, -1, 1], [1, -1, 1], [1, -1, -1], -rxx, -rh, -rz],
+      [[0, -1, 1], [1, -1, 1], [1, 1, 1], [0, 1, 1], sx, sh, sz],
+      [[0, -1, -1], [0, 1, -1], [1, 1, -1], [1, -1, -1], -sx, -sh, -sz],
+    ];
+    const look = VIEW.look * Math.PI / 180;
+    const camx = -Math.sin(look), camh = 0.55, camz = Math.cos(look);
+    for (const f of faces) {
+      const q = [corner(f[0][0], f[0][1], f[0][2]), corner(f[1][0], f[1][1], f[1][2]), corner(f[2][0], f[2][1], f[2][2]), corner(f[3][0], f[3][1], f[3][2])];
+      const e1 = { x: q[1].x - q[0].x, h: q[1].abs - q[0].abs, z: q[1].z - q[0].z };
+      const e2 = { x: q[2].x - q[0].x, h: q[2].abs - q[0].abs, z: q[2].z - q[0].z };
+      let n = cross3(e1, e2);
+      const nl = Math.hypot(n.x, n.h, n.z) || 1;
+      if (n.x * f[4] + n.h * f[5] + n.z * f[6] < 0) n = { x: -n.x, h: -n.h, z: -n.z };
+      const nx = n.x / nl, nh = n.h / nl, nz = n.z / nl;
+      if (nx * camx + nh * camh + nz * camz <= 0.02) continue;
+      const pts = q.map(pxAbs);
+      poly(ctx, pts, lit(rgb, nx, nh, nz));
+      if (viewK > 0.5) {
+        path(ctx, pts);
+        ctx.lineWidth = 0.55;
+        ctx.strokeStyle = 'rgba(28,22,16,0.32)';
+        ctx.stroke();
+      }
+    }
+  }
+  function groundOval(ctx, x, z, rx, rz, h, color) {
+    ctx.beginPath();
+    for (let i = 0; i <= 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const p = toPx(x + Math.cos(a) * rx, z + Math.sin(a) * rz, h || 0.03);
+      if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]);
+    }
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+  function drawShadow(ctx, g) {
+    const sun = sunNow();
+    const fx = (g.stanceFoot.x + g.swingFoot.x) / 2, fz = (g.stanceFoot.z + g.swingFoot.z) / 2;
+    groundOval(ctx, fx, fz, 1.1, 0.64, 0.04, 'rgba(36,28,22,0.32)');
+    if (sun.up <= 0.015 || viewK < 0.1) return;
+    const horiz = Math.hypot(sun.x, sun.z) || 1;
+    const len = Math.min(84, TALL * 0.96 * horiz / Math.max(0.08, sun.up));
+    const sx = -sun.x / horiz, sz = -sun.z / horiz;
+    const n = Math.min(viewK < 0.35 ? 5 : 12, Math.max(3, Math.ceil(len / 6)));
+    // A low sun throws a long shadow. It stays dark enough to read, and thins out along its length.
+    for (let i = 1; i <= n; i++) {
+      const t = i / n, fade = 0.4 * (1 - t * 0.82) * (0.7 + 0.3 * Math.min(1, sun.up * 4));
+      groundOval(ctx, g.x + sx * len * t, g.z + sz * len * t, 0.9 * (1 - t * 0.4), 0.48 * (1 - t * 0.3), 0.05, `rgba(36,28,22,${fade.toFixed(3)})`);
+    }
+  }
+  function drawPrints(ctx, g) {
+    if (viewK < 0.18 || !g.leg) return;
+    const tide = tideAt(Date.now());
+    const nowT = g.since;
+    for (let i = Math.max(0, g.plantIndex - 14); i <= g.plantIndex; i++) {
+      const p = g.leg.plants[i];
+      if (!p) continue;
+      const age = nowT - timeOf(g.leg.events, p.hip0);
+      if (age < -0.05 || age > 60) continue;
+      const gh = heightAt(p.x, p.z);
+      if (p.kind === 'hard') {
+        if (i === g.plantIndex && age < 0.45 && g.moving) groundOval(ctx, p.x, p.z, 0.75, 0.42, 0.08, 'rgba(168,152,124,0.45)');
+        continue;
+      }
+      if (p.kind === 'sand' && tide > gh + 0.06) continue;
+      let alpha, w;
+      if (p.kind === 'sand') {
+        const sink = 1 - Math.exp(-Math.max(0, age) / 16);
+        const damp = tide > gh - 0.35 ? 0.4 : 1;
+        alpha = 0.55 * (1 - sink * 0.85) * damp;
+        w = 0.58 * (1 - sink * 0.4);
+      } else {
+        if (age > 36) continue;
+        alpha = 0.2 * (1 - age / 36);
+        w = 0.4;
+      }
+      if (alpha < 0.03) continue;
+      const ink = `rgba(62,48,32,${alpha.toFixed(3)})`;
+      groundOval(ctx, p.x - p.dx * 0.12, p.z - p.dz * 0.12, w * 0.55, w * 0.36, 0.03, ink);
+      groundOval(ctx, p.x + p.dx * 0.28, p.z + p.dz * 0.28, w * 0.38, w * 0.26, 0.03, ink);
+    }
+  }
+  function drawSplash(ctx, g) {
+    if (!sky.rain || !g.moving || g.u > 0.2) return;
+    const a = (0.2 - g.u) / 0.2, f = g.stanceFoot;
+    groundOval(ctx, f.x, f.z, 0.35 + a * 0.55, 0.22 + a * 0.3, 0.06 + a * 0.4, `rgba(214,224,232,${(0.4 * a).toFixed(3)})`);
+  }
+  function drawFoam(ctx, g) {
+    const depth = wadeDepth(g);
+    if (depth <= 0) return;
+    for (const f of [g.stanceFoot, g.swingFoot]) {
+      groundOval(ctx, f.x, f.z, 0.85, 0.48, depth, 'rgba(236,244,246,0.55)');
+      groundOval(ctx, f.x, f.z, 1.25, 0.7, depth, 'rgba(220,234,238,0.28)');
+    }
+  }
+  function legUp(hx, hz, foot) {
+    const horiz = Math.hypot(hx - foot.x, hz - foot.z), L = 0.985 * LEG_LEN;
+    if (horiz >= L) return 0.15;
+    return Math.sqrt(L * L - horiz * horiz);
+  }
+  function solveLeg(hip, foot, lift, poleX, poleZ) {
+    const ankle = { x: foot.x, z: foot.z, abs: heightAt(foot.x, foot.z) + 0.12 + lift };
+    const thigh = 0.48 * LEG_LEN, shin = 0.52 * LEG_LEN;
+    const dx = ankle.x - hip.x, dy = ankle.abs - hip.abs, dz = ankle.z - hip.z;
+    const dist = Math.hypot(dx, dy, dz) || 0.001;
+    const use = Math.min(dist, thigh + shin - 0.001);
+    const ux = dx / dist, uy = dy / dist, uz = dz / dist;
+    const cosA = Math.max(-1, Math.min(1, (thigh * thigh + use * use - shin * shin) / (2 * thigh * use || 1)));
+    const bend = Math.sqrt(Math.max(0, 1 - cosA * cosA)) * thigh;
+    let px = poleX, py = 0.25, pz = poleZ;
+    const dot = px * ux + py * uy + pz * uz;
+    px -= ux * dot; py -= uy * dot; pz -= uz * dot;
+    const pl = Math.hypot(px, py, pz) || 1;
+    return {
+      knee: { x: hip.x + ux * cosA * thigh + px / pl * bend, z: hip.z + uz * cosA * thigh + pz / pl * bend, abs: hip.abs + uy * cosA * thigh + py / pl * bend },
+      ankle,
+    };
+  }
+  function headingOf(dx, dz) { return Math.atan2(dx, -dz); }
+  function windOff(scale) {
+    const gust = 0.72 + 0.28 * Math.sin(unix() * 1.1) * Math.sin(unix() * 0.37 + 1.2);
+    const mag = Math.min(1.15, (sky.wind || 0) * 0.07) * gust * scale;
+    return { x: (sky.wx || 1) * mag, z: (sky.wz || 0) * mag };
+  }
+  function figureOf(g) {
+    const lift = g.pause ? 0 : Math.sin(Math.PI * g.u) * (0.18 + 0.05 * Math.min(g.sl, 4));
+    const fromStance = heightAt(g.stanceFoot.x, g.stanceFoot.z) + legUp(g.x, g.z, g.stanceFoot);
+    let hipAbs = fromStance;
+    if (lift < 0.08) {
+      const other = g.u < 0.5 ? (g.plantIndex ? g.leg.plants[g.plantIndex - 1] : null) : g.leg.plants[g.plantIndex + 1];
+      const o = other || { x: g.swingFoot.x, z: g.swingFoot.z };
+      const fromOther = heightAt(o.x, o.z) + legUp(g.x, g.z, o);
+      hipAbs = fromStance + (Math.max(fromStance, fromOther) - fromStance) * (1 - lift / 0.08);
+    }
+    const hip = { x: g.x, z: g.z, abs: hipAbs };
+    let face = headingOf(g.dx, g.dz);
+    if (g.pause) {
+      const target = lookTarget(g.x, g.z);
+      let ang = headingOf(target.x - g.x, target.z - g.z) - face;
+      while (ang > Math.PI) ang -= Math.PI * 2;
+      while (ang < -Math.PI) ang += Math.PI * 2;
+      face += Math.max(-1.15, Math.min(1.15, ang)) * Math.sin(Math.PI * (g.pauseU || 0));
+    }
+    const faceD = { x: Math.sin(face), z: -Math.cos(face) };
+    const nx = -faceD.z, nz = faceD.x;
+    const lean = g.pause ? g.lean * 0.35 : g.lean;
+    const neck = {
+      x: hip.x + faceD.x * Math.sin(lean) * 2.05,
+      z: hip.z + faceD.z * Math.sin(lean) * 2.05,
+      abs: hip.abs + Math.cos(lean) * 2.05,
+    };
+    const crown = { x: neck.x + faceD.x * 0.16, z: neck.z + faceD.z * 0.16, abs: neck.abs + 0.7 };
+    const chin = { x: neck.x + faceD.x * 0.34, z: neck.z + faceD.z * 0.34, abs: neck.abs + 0.02 };
+    const parts = [];
+    const add = (a, b, rx, ry, rgb) => parts.push({ a, b, rx, ry, rgb, d: depthOf((a.x + b.x) / 2, (a.z + b.z) / 2) });
+    const plantDx = g.plant.dx, plantDz = g.plant.dz;
+    const pole = { x: plantDx * 0.85 + nx * g.side * 0.2, z: plantDz * 0.85 + nz * g.side * 0.2 };
+    const stance = solveLeg(hip, g.stanceFoot, 0, pole.x, pole.z);
+    const swing = solveLeg(hip, g.swingFoot, lift, pole.x, pole.z);
+    const footOf = (ankle, up) => ({ x: ankle.x + plantDx * 0.48, z: ankle.z + plantDz * 0.48, abs: ankle.abs - 0.04 + up });
+    add(hip, stance.knee, 0.24, 0.22, TUNIC);
+    add(stance.knee, stance.ankle, 0.15, 0.14, FLESH);
+    add(stance.ankle, footOf(stance.ankle, 0), 0.16, 0.1, FLESH);
+    add(hip, swing.knee, 0.24, 0.22, TUNIC);
+    add(swing.knee, swing.ankle, 0.15, 0.14, FLESH);
+    add(swing.ankle, footOf(swing.ankle, lift * 0.25), 0.16, 0.1, FLESH);
+    add(hip, neck, 0.58, 0.36, TUNIC);
+    const waist = { x: hip.x + faceD.x * Math.sin(lean) * 0.15, z: hip.z + faceD.z * Math.sin(lean) * 0.15, abs: hip.abs + Math.cos(lean) * 0.15 };
+    add(waist, { x: waist.x + nx * 0.02, z: waist.z + nz * 0.02, abs: waist.abs + 0.16 }, 0.6, 0.4, BELT);
+    const knife = { x: waist.x + nx * 0.42, z: waist.z + nz * 0.42, abs: waist.abs };
+    add(knife, { x: knife.x + faceD.x * 0.08, z: knife.z + faceD.z * 0.08, abs: knife.abs - 0.55 }, 0.05, 0.03, STEEL);
+    add({ x: neck.x - faceD.x * 0.12, z: neck.z - faceD.z * 0.12, abs: neck.abs - 0.05 }, crown, 0.34, 0.3, FLESH);
+    if (viewK > 0.35) {
+      add(chin, { x: chin.x + faceD.x * 0.12, z: chin.z + faceD.z * 0.12, abs: chin.abs + 0.08 }, 0.07, 0.06, FLESH);
+      add({ x: crown.x + nx * 0.1, z: crown.z + nz * 0.1, abs: crown.abs - 0.08 }, { x: crown.x + nx * 0.1 + faceD.x * 0.2, z: crown.z + nz * 0.1 + faceD.z * 0.2, abs: crown.abs - 0.02 }, 0.045, 0.04, EYE);
+      add({ x: crown.x - nx * 0.1, z: crown.z - nz * 0.1, abs: crown.abs - 0.08 }, { x: crown.x - nx * 0.1 + faceD.x * 0.2, z: crown.z - nz * 0.1 + faceD.z * 0.2, abs: crown.abs - 0.02 }, 0.045, 0.04, EYE);
+    }
+    const phase = g.pause ? 0.5 : g.u;
+    const arm = (sign) => {
+      const ang = (sign === g.side ? -1 : 1) * Math.cos(Math.PI * phase) * 0.72;
+      const s = { x: neck.x + nx * sign * 0.62 - faceD.x * 0.05, z: neck.z + nz * sign * 0.62 - faceD.z * 0.05, abs: neck.abs - 0.22 };
+      const dirx = faceD.x * Math.sin(ang) + nx * sign * 0.16, dirz = faceD.z * Math.sin(ang) + nz * sign * 0.16, down = Math.cos(ang * 0.3);
+      const el = Math.hypot(dirx, down, dirz) || 1;
+      const elbow = { x: s.x + dirx / el * 1.22, z: s.z + dirz / el * 1.22, abs: s.abs - down / el * 1.22 };
+      const hand = { x: elbow.x + faceD.x * Math.sin(ang) * 0.42 + nx * sign * 0.06, z: elbow.z + faceD.z * Math.sin(ang) * 0.42 + nz * sign * 0.06, abs: elbow.abs - 1.02 };
+      add(s, elbow, 0.13, 0.12, TUNIC);
+      add(elbow, hand, 0.11, 0.1, FLESH);
+      add(hand, { x: hand.x + faceD.x * 0.18, z: hand.z + faceD.z * 0.18, abs: hand.abs - 0.08 }, 0.16, 0.1, FLESH);
+      return hand;
+    };
+    const handR = arm(1), handL = arm(-1);
+    if (sunNow().up <= 0) {
+      const hold = handR;
+      add(hold, { x: hold.x, z: hold.z, abs: hold.abs + 0.34 }, 0.1, 0.1, LAMP_TIN);
+    }
+    if (viewK > 0.22) {
+      const wBeard = windOff(1.4), wHair = windOff(1.1), wHem = windOff(0.8);
+      add(chin, { x: chin.x + faceD.x * 0.15 + wBeard.x, z: chin.z + faceD.z * 0.15 + wBeard.z, abs: chin.abs - 0.55 }, 0.12, 0.1, STRAW);
+      add(chin, { x: chin.x + nx * 0.12 + wBeard.x * 0.7, z: chin.z + nz * 0.12 + wBeard.z * 0.7, abs: chin.abs - 0.4 }, 0.08, 0.07, STRAW);
+      add(crown, { x: crown.x - faceD.x * 0.35 + wHair.x, z: crown.z - faceD.z * 0.35 + wHair.z, abs: crown.abs - 0.15 }, 0.16, 0.12, MANE);
+      add(crown, { x: crown.x + wHair.x * 0.5, z: crown.z + wHair.z * 0.5, abs: crown.abs + 0.12 }, 0.2, 0.14, MANE);
+      add(crown, { x: crown.x + nx * 0.2 + wHair.x * 0.4, z: crown.z + nz * 0.2 + wHair.z * 0.4, abs: crown.abs + 0.02 }, 0.1, 0.08, LEAF);
+      add(crown, { x: crown.x - nx * 0.16 - faceD.x * 0.1, z: crown.z - nz * 0.16 - faceD.z * 0.1, abs: crown.abs + 0.04 }, 0.09, 0.07, LEAF);
+      add({ x: hip.x + nx * 0.4, z: hip.z + nz * 0.4, abs: hip.abs - 0.05 }, { x: hip.x + nx * 0.55 + wHem.x, z: hip.z + nz * 0.55 + wHem.z, abs: hip.abs - 0.9 }, 0.12, 0.08, TUNIC);
+      add({ x: hip.x - nx * 0.4, z: hip.z - nz * 0.4, abs: hip.abs - 0.05 }, { x: hip.x - nx * 0.55 + wHem.x, z: hip.z - nz * 0.55 + wHem.z, abs: hip.abs - 0.9 }, 0.12, 0.08, TUNIC);
+    }
+    parts.sort((a, b) => b.d - a.d);
+    return parts;
+  }
+  function drawBolster(ctx, g) {
+    if (!g || g.alpha < 0.02) return;
+    ctx.save();
+    ctx.globalAlpha *= g.alpha;
+    drawShadow(ctx, g);
+    drawPrints(ctx, g);
+    drawSplash(ctx, g);
+    drawFoam(ctx, g);
+    const floor = (g.cover || 0) > 0.3 ? heightAt(g.x, g.z) + g.cover : null;
+    for (const part of figureOf(g)) bone(ctx, part.a, part.b, part.rx, part.ry, part.rgb, floor);
+    ctx.restore();
+  }
+
+  // A hill in front of him, the Beacon included, hides whatever of him the ground itself covers. The ray is the same
+  // one the roads use for a car, walked in the current view, so turning the map turns the hidden part with it.
+  function terrainCover(x, z) {
+    if (!HEIGHTS) return 0;
+    const base = heightAt(x, z), step = 5.5, c = VIEW.c, s = VIEW.s;
+    const u = x * c + z * s, w = x * s - z * c;
+    let cover = 0;
+    for (let k = 1; k <= 42; k++) {
+      const wk = w - k * step, gx = u * c + wk * s, gz = u * s - wk * c;
+      const need = heightAt(gx, gz) - (k * step) / (2 * COS30) - base;
+      if (need > cover) cover = need;
+      if (cover > TALL + 1) break;
+    }
+    return Math.max(0, cover - 0.25);
+  }
+  function coverFlags(lane, s, x, z) {
+    const within = (list) => list && list.some(([a, b]) => s >= a - 1.5 && s <= b + 1.5);
+    const land = terrainCover(x, z), v = laneView;
+    const inH = !!(lane && lane.h && within(lane.h[v]));
+    const inT = !!(lane && lane.t && within(lane.t[v]));
+    return { cover: land, underBuilding: inH && land < 2.2, underTree: inT };
+  }
+
+  // Three gulls sit at Chapel Porth until he comes close, then they lift. The sea foams at his ankles only there,
+  // and only while the water is over the sand and still below his knee.
+  const GULL_OFF = [[22, 14], [-28, 26], [40, -6]];
+  let chapel = null, story = null;
+  function chapelAt() {
+    if (chapel) return chapel;
+    const [X, Y] = wgsToGrid(50.30025, -5.23476);
+    chapel = gridToLocal(X, Y);
+    return chapel;
+  }
+  function storySpots() {
+    if (story) return story;
+    if (!M || !M.area) return [];
+    story = [['the Beacon', 50.30731, -5.21735], ['Chapel Porth', 50.30025, -5.23476], ['the Bolster Bank', 50.30295, -5.21054], ['Trevaunance Cove', 50.3203, -5.202]].map(([name, lat, lon]) => {
+      const [X, Y] = wgsToGrid(lat, lon), o = gridToLocal(X, Y);
+      return { name, x: o.x, z: o.z };
+    });
+    return story;
+  }
+  function lookTarget(x, z) {
+    let best = null, bd = 600;
+    for (const q of places) {
+      const o = gridToLocal(q.x, q.y), d = Math.hypot(o.x - x, o.z - z);
+      if (d < bd) bd = d, best = o;
+    }
+    if (best) return best;
+    bd = Infinity;
+    for (const s of storySpots()) {
+      const d = Math.hypot(s.x - x, s.z - z);
+      if (d < bd) bd = d, best = s;
+    }
+    return best || { x: x + 40, z: z - 20 };
+  }
+  function gullsNear(g) {
+    if (!M || !M.area) return [];
+    const c = chapelAt(), out = [];
+    for (let i = 0; i < GULL_OFF.length; i++) {
+      const x = c.x + GULL_OFF[i][0], z = c.z + GULL_OFF[i][1];
+      let scare = 0, dx = 0.2, dz = -0.98;
+      if (g) {
+        const ddx = x - g.x, ddz = z - g.z, dist = Math.hypot(ddx, ddz) || 1;
+        if (dist < 52) scare = (52 - dist) / 52, dx = ddx / dist, dz = ddz / dist;
+      }
+      const sp = Math.hypot(dx, dz) || 1;
+      out.push({ mode: GULL, alpha: 1, x, z, h: 0.35 + scare * scare * 20, scare, phase: i * 2.1, dx: dx / sp, dz: dz / sp });
+    }
+    return out;
+  }
+  function drawGull(ctx, m, x, z) {
+    const h = m.h || 0.4, nx = -m.dz, nz = m.dx;
+    const beat = Math.sin(unix() * (m.scare > 0.2 ? 8 : 1.5) + (m.phase || 0));
+    const w = 0.62, lift = m.scare > 0.2 ? beat * 0.5 : beat * 0.04;
+    const wing = (s) => toPx(x + nx * w * s, z + nz * w * s, h + lift);
+    const mid = toPx(x, z, h), a = wing(-1), b = wing(1);
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]); ctx.lineTo(mid[0], mid[1]); ctx.lineTo(b[0], b[1]);
+    const tail = toPx(x - m.dx * 0.28, z - m.dz * 0.28, h), nose = toPx(x + m.dx * 0.34, z + m.dz * 0.34, h);
+    ctx.moveTo(tail[0], tail[1]); ctx.lineTo(nose[0], nose[1]);
+    ctx.lineWidth = 1.2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = m.scare > 0.2 ? '#f6f3ec' : '#d9d2c4';
+    ctx.stroke();
+  }
+  function wadeDepth(g) {
+    if (!g || !M || !M.area) return 0;
+    const c = chapelAt();
+    if (Math.hypot(g.x - c.x, g.z - c.z) > 340) return 0;
+    const d = tideAt(Date.now()) - heightAt(g.x, g.z);
+    return d > 0.06 && d < 1.35 ? d : 0;
+  }
+
+  // After dark the lantern is his, whether or not the decorative lamps are on. It lights the road around his feet.
+  function drawLantern(ctx) {
     const g = bolsterShown;
-    if (!g || g.alpha < 0.5) return false;
-    const [fx, fy] = toPx(g.x, g.z, 0), [, ty] = toPx(g.x, g.z, TALL);
-    const pad = 5 / viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true));
-    return Math.abs(p.x - fx) < 2.2 * M.scale + pad && p.y > ty - pad && p.y < fy + pad;
+    if (!g || sunNow().up > 0) return;
+    const x = g.x + g.dx * 0.9 + -g.dz * 0.45, z = g.z + g.dz * 0.9 + g.dx * 0.45;
+    blob(ctx, LAMP, x, z, 0, 15, 0.46 * g.alpha, true);
+    blob(ctx, LAMP, x + g.dx * 7, z + g.dz * 7, 0, 9, 0.2 * g.alpha, true);
+    blob(ctx, BEAM, x, z, 2.2, 0.55, 0.85 * g.alpha);
   }
-  // The name of where he stands: the road he is on, or else the nearest named place.
+
   function placeName(x, z) {
     let best = null, bd = 40;
     for (const r of roads) for (let k = 0; k < r.p.length; k++) {
@@ -1804,16 +2485,61 @@ Work step by step, check the licences of the data you use, and ask me about the 
     }
     return best || 'in St Agnes';
   }
+  function broadName(x, z) {
+    let best = null, bd = Infinity;
+    for (const s of storySpots()) {
+      const d = Math.hypot(s.x - x, s.z - z);
+      if (d < bd) bd = d, best = s;
+    }
+    return best ? best.name : 'the village';
+  }
   const when = (t) => new Date(t * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const clockTime = (t) => new Date(t * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  let bolsterLink = '';
-  function showBolsterCard(title, where, text, t, count) {
+  let bolsterLink = '', bolsterShare = '', warmthPrev = null, rumourAt = 0, rumourText = '';
+  function dayKey(t) {
+    const d = new Date(t * 1000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function readTally() {
+    try {
+      return { finds: parseInt(localStorage.getItem('bolster-finds'), 10) || 0, streak: parseInt(localStorage.getItem('bolster-streak'), 10) || 0 };
+    } catch { return { finds: 0, streak: 0 }; }
+  }
+  function noteFind(t, n) {
+    const today = dayKey(t);
+    let finds = 1, streak = 1;
+    try {
+      finds = (parseInt(localStorage.getItem('bolster-finds'), 10) || 0) + 1;
+      const last = localStorage.getItem('bolster-last-day') || '';
+      const prev = new Date(t * 1000);
+      prev.setDate(prev.getDate() - 1);
+      const yesterday = dayKey(prev.getTime() / 1000);
+      const had = parseInt(localStorage.getItem('bolster-streak'), 10) || 0;
+      streak = last === today ? Math.max(1, had) : last === yesterday ? had + 1 : 1;
+      localStorage.setItem('bolster-finds', String(finds));
+      localStorage.setItem('bolster-streak', String(streak));
+      localStorage.setItem('bolster-last-day', today);
+      localStorage.setItem('bolster-gone', String(n));
+    } catch { /* private mode: the find still shows, and is forgotten when the tab closes */ }
+    return { finds, streak };
+  }
+  function tallyLine(t) {
+    const row = t || readTally();
+    if (!row.finds) return '';
+    return `Your finds: ${row.finds}. Streak: ${row.streak} ${row.streak === 1 ? 'day' : 'days'}.`;
+  }
+  function loreFor(n) { return LORE[Math.abs(n) % LORE.length]; }
+  function showBolsterCard(title, where, text, t, count, n) {
+    const lore = loreFor(n);
     document.getElementById('bolster-title').textContent = title;
     document.getElementById('bolster-where').textContent = where;
     document.getElementById('bolster-text').textContent = text;
-    document.getElementById('bolster-count').textContent = count;
-    bolsterLink = `${location.origin}${location.pathname}#bolster=${Math.floor(t)}`;
-    document.getElementById('bolster-copy').textContent = 'Copy the link to this find';
+    document.getElementById('bolster-count').textContent = count || '';
+    document.getElementById('bolster-lore').textContent = lore[0];
+    document.getElementById('bolster-src').textContent = lore[1];
+    bolsterLink = `${location.origin}${location.pathname}${location.search}#bolster=${Math.floor(t)}`;
+    bolsterShare = `I found Bolster the giant ${where.replace(/\.$/, '')}. He is out on the roads, the paths and the sand of St Agnes, and everyone sees him in the same place.\n${bolsterLink}`;
+    document.getElementById('bolster-copy').textContent = 'Copy a note of this find';
     closeInfo();
     bolsterEl.hidden = false;
   }
@@ -1823,9 +2549,9 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (/^#bolster=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   }
   function foundBolster() {
-    const g = bolsterShown, t = unix();
-    let finds = 0;
-    try { finds = (parseInt(localStorage.getItem('bolster-finds')) || 0) + 1; localStorage.setItem('bolster-finds', finds); localStorage.setItem('bolster-gone', g.n); } catch {}
+    const g = bolsterShown;
+    if (!g) return;
+    const t = unix(), tally = noteFind(t, g.n);
     goneLeg = g.n;
     document.getElementById('map').classList.remove('over-bolster');
     tip.hidden = true;
@@ -1833,60 +2559,158 @@ Work step by step, check the licences of the data you use, and ask me about the 
     marker = document.createElement('div');
     marker.className = 'marker';
     anchor(marker, g.x, g.z, 0);
-    showBolsterCard('You found Bolster!', `${when(t)}, ${placeName(g.x, g.z)}.`,
-      `He saw you and he is gone. He walks again at ${clockTime((g.n + 1) * LEG)}, somewhere else on the map. Send the link to a friend: it shows where he stood at this minute.`,
-      t, finds ? `YOUR FINDS: ${finds}` : '');
+    const first = g.since < 120;
+    showBolsterCard(
+      first ? 'You found him as he set out' : 'You found Bolster',
+      `${when(t)}, ${placeName(g.x, g.z)}.`,
+      first
+        ? `You were there as this leg began. He saw you and he is gone. He walks again at ${clockTime((g.n + 1) * LEG)}.`
+        : `He saw you and he is gone. He walks again at ${clockTime((g.n + 1) * LEG)}, somewhere else on the map.`,
+      t, tallyLine(tally), g.n,
+    );
+    rumourAt = 0;
+    paintRumour();
   }
-  // A link to a find: #bolster=<seconds since 1970>. The place follows from the time, so the link cannot lie.
   function openBolsterLink() {
     const m = location.hash.match(/^#bolster=(\d{9,11})$/);
     if (!m || !lanes.length || !viewer) return false;
-    const t = parseInt(m[1]), g = bolsterAt(t);
+    const t = parseInt(m[1], 10), g = bolsterAt(t);
+    if (!g) return false;
     flyTo(g.x + M.area.cx, M.area.cy - g.z, 0, 1.4, true, 60);
+    const had = readTally();
     showBolsterCard('Bolster was found here', `${when(t)}, ${placeName(g.x, g.z)}.`,
-      'He has walked on since then. He is always somewhere on the map, on a road, a path or the sand, and everyone sees him in the same place. Can you find him? His story is at the Beacon, Chapel Porth and the Bolster Bank.', t, '');
+      'He has walked on since then. He is always somewhere on the map, on a road, a path or the sand, and everyone sees him in the same place.',
+      t, tallyLine(had), g.n);
     return true;
   }
   document.getElementById('bolster-close').addEventListener('click', closeBolster);
   document.getElementById('bolster-copy').addEventListener('click', async (e) => {
+    const note = bolsterShare || bolsterLink;
     try {
-      await navigator.clipboard.writeText(bolsterLink);
+      await navigator.clipboard.writeText(note);
       e.target.textContent = 'Copied';
     } catch {
-      prompt('Copy this link', bolsterLink);
+      prompt('Copy this note', note);
+      e.target.textContent = 'Copied';
     }
+    setTimeout(() => (e.target.textContent = 'Copy a note of this find'), 2500);
   });
   window.addEventListener('hashchange', openBolsterLink);
 
-  // The giant, as the old sources have him: Robert Hunt (1865) gives only his size, his great hands and a knife, and
-  // George Cruikshank's drawing in Hunt's book a belted, long-sleeved tunic to the knee and bare lower legs. No
-  // club: none is told of or drawn. The straw beard and the leaves in his hair nod to the giant of the village's
-  // Bolster Festival. Nearly four times a walker.
-  const TUNIC = [136, 98, 58], BELT = [58, 44, 34], FLESH = [214, 170, 136], MANE = [92, 58, 36], STRAW = [216, 188, 122], LEAF = [78, 122, 54], STEEL = [176, 182, 188], EYE = [40, 34, 30];
-  function drawBolster(ctx, g, x, z, dx, dz) {
-    const K = TALL / 1.72, stride = (g.since * STRIDE) / (0.75 * K) * Math.PI;
-    const sw = Math.sin(stride) * 0.2, arm = Math.sin(stride) * 0.16, bob = Math.abs(Math.cos(stride)) * 0.03;
-    const boxes = [
-      [sw - 0.1, sw + 0.1, 0.085, 0, 0.52, FLESH, -0.14],
-      [-sw - 0.1, -sw + 0.1, 0.085, 0, 0.52, FLESH, 0.14],
-      [-0.18, 0.18, 0.28, 0.46 + bob, 1.3 + bob, TUNIC],
-      [-0.19, 0.19, 0.29, 0.8 + bob, 0.87 + bob, BELT],
-      [0.19, 0.215, 0.03, 0.6 + bob, 0.84 + bob, STEEL, 0.17],
-      [-arm - 0.08, -arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, -0.36],
-      [-arm - 0.07, -arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, -0.36],
-      [arm - 0.08, arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, 0.36],
-      [arm - 0.07, arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, 0.36],
-      [-0.14, 0.14, 0.15, 1.3 + bob, 1.6 + bob, FLESH],
-      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, -0.07],
-      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, 0.07],
-      [0.07, 0.2, 0.14, 1.17 + bob, 1.42 + bob, STRAW],
-      [-0.2, -0.12, 0.16, 1.24 + bob, 1.58 + bob, MANE],
-      [-0.18, 0.1, 0.17, 1.56 + bob, 1.72 + bob, MANE],
-      [-0.19, 0.115, 0.18, 1.58 + bob, 1.63 + bob, LEAF],
-    ].map(([a, b, w, h0, h1, c, right = 0]) => [a * K, b * K, w * K, h0 * K, h1 * K, c, right * K]);
-    drawBoxes(ctx, x, z, dx, dz, boxes, () => TUNIC, { sort: true, outline: true });
+  function warmthWord(g) {
+    if (!viewer || !viewer.viewport) return '';
+    const b = viewer.viewport.viewportToImageRectangle(viewer.viewport.getBounds(true));
+    const c = imageToGround(b.x + b.width / 2, b.y + b.height / 2);
+    const d = Math.hypot(c.x - g.x, c.z - g.z);
+    let word = '';
+    if (d < 80) word = 'Very warm.';
+    else if (warmthPrev != null && d < warmthPrev - 35) word = 'Warmer.';
+    else if (warmthPrev != null && d > warmthPrev + 35) word = 'Colder.';
+    warmthPrev = d;
+    return word;
+  }
+  function rumourLine(g) {
+    if (goneLeg === g.n) return `He saw you. He walks again at ${clockTime((g.n + 1) * LEG)}.`;
+    const f = g.since / LEG;
+    const where = placeName(g.x, g.z);
+    let line;
+    if (f < 0.22) line = `A rumour from the village: a very tall figure was seen out by ${broadName(g.x, g.z)}.`;
+    else if (f < 0.55) line = `Bolster is near ${broadName(g.x, g.z)}.`;
+    else if (f < 0.82) line = `Bolster is ${where}.`;
+    else line = `He is ${where}.`;
+    if (g.kind === 'sand' && f >= 0.55) line = `${line.replace(/\.$/, '')}, on the sand.`;
+    const warm = warmthWord(g);
+    return warm ? `${line} ${warm}` : line;
+  }
+  function paintRumour() {
+    const now = unix();
+    if (rumourAt && now - rumourAt < 0.4) return;
+    rumourAt = now;
+    const el = document.getElementById('bolster-rumour'), tally = document.getElementById('bolster-tally');
+    const g = lanes.length ? bolsterAt(now) : null;
+    const line = g ? rumourLine(g) : '';
+    if (el && line !== rumourText) {
+      rumourText = line;
+      el.textContent = line;
+      el.hidden = !line;
+    }
+    const row = tallyLine();
+    if (tally && tally.textContent !== row) {
+      tally.textContent = row;
+      tally.hidden = !row;
+    }
   }
 
+  // Footfalls, only when he is close and only after the visitor asks. Quiet by default.
+  let stepsOn = false, stepsCtx = null, lastPlantHeard = -1;
+  function thud(force) {
+    if (!stepsOn && !force) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try {
+      stepsCtx ||= new AC();
+      if (stepsCtx.state === 'suspended') stepsCtx.resume();
+      const t0 = stepsCtx.currentTime, o = stepsCtx.createOscillator(), gain = stepsCtx.createGain(), filter = stepsCtx.createBiquadFilter();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(70, t0);
+      o.frequency.exponentialRampToValueAtTime(42, t0 + 0.12);
+      filter.type = 'lowpass';
+      filter.frequency.value = 180;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.09, t0 + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+      o.connect(filter); filter.connect(gain); gain.connect(stepsCtx.destination);
+      o.start(t0); o.stop(t0 + 0.16);
+    } catch { /* this browser has no audio, and the walk goes on without it */ }
+  }
+  function maybeThud(g) {
+    if (!stepsOn || !g.moving || g.pause || !viewer) return;
+    let z = 1;
+    try { z = viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true)); } catch { return; }
+    if (z < 0.85 || g.u > 0.12 || g.plantIndex === lastPlantHeard) return;
+    lastPlantHeard = g.plantIndex;
+    thud(false);
+  }
+  function setSteps(on) {
+    stepsOn = !!on;
+    const btn = document.getElementById('steps');
+    if (btn) btn.classList.toggle('on', stepsOn), btn.setAttribute('aria-pressed', stepsOn ? 'true' : 'false');
+    try { localStorage.setItem('bolster-steps', stepsOn ? '1' : '0'); } catch { /* private */ }
+  }
+  const stepsBtn = document.getElementById('steps');
+  if (stepsBtn) stepsBtn.addEventListener('click', () => { setSteps(!stepsOn); if (stepsOn) thud(true); });
+  try { if (localStorage.getItem('bolster-steps') === '1') setSteps(true); } catch { /* private */ }
+
+  function overBolster(p) {
+    const g = bolsterShown;
+    if (!g || g.alpha < 0.5 || !viewer) return false;
+    const [fx, fy] = toPx(g.x, g.z, 0), [, ty] = toPx(g.x, g.z, TALL);
+    const pad = 5 / viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true));
+    return Math.abs(p.x - fx) < 3.3 * M.scale + pad && p.y > ty - pad && p.y < fy + pad;
+  }
+
+  // For the headless check. The page itself never calls these.
+  function bolsterNote() { return bolsterShare || ''; }
+  function bolsterPose(t) {
+    const g = poseAt(t);
+    if (!g) return null;
+    const sun = sunAt(t * 1000);
+    return {
+      n: g.n, since: g.since, x: g.x, z: g.z, dx: g.dx, dz: g.dz,
+      grade: g.grade, speed: g.speed, lean: g.lean, stepT: STEP_T, swingT: SWING_T, leg: LEG_LEN,
+      u: g.u, pause: !!g.pause, moving: !!g.moving, kind: g.kind,
+      stance: { x: g.stanceFoot.x, z: g.stanceFoot.z }, swing: { x: g.swingFoot.x, z: g.swingFoot.z },
+      sun: { alt: sun.alt, az: sun.az, up: sun.up, x: sun.x, z: sun.z },
+      tide: tideAt(t * 1000), tideSource: sky.tideSource, wind: sky.wind, wet: sky.wet,
+      cover: g.cover, underBuilding: !!g.underBuilding, underTree: !!g.underTree, sl: g.sl, plantIndex: g.plantIndex,
+    };
+  }
+  function frameBolster(zoom) {
+    const g = bolsterNow() || poseAt(unix());
+    if (!g || !viewer) return null;
+    flyTo(g.x + M.area.cx, M.area.cy - g.z, 0, zoom || 2.2, false, 0);
+    return { x: g.x, z: g.z, kind: g.kind, u: g.u };
+  }
   // A bird: two wings that beat, with its shadow far off on the ground.
   function drawBird(ctx, f, b, inView) {
     const nx = -f.dz, nz = f.dx;
@@ -1897,7 +2721,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const sx = x + SHADOW[0] * h, sz = z + SHADOW[1] * h;
     if (inView(sx, sz, 0)) poly(ctx, [toPx(sx - nx * 0.5, sz - nz * 0.5, 0), toPx(sx + f.dx * 0.4, sz + f.dz * 0.4, 0), toPx(sx + nx * 0.5, sz + nz * 0.5, 0)], 'rgba(16,20,30,0.14)');
     if (!inView(x, z, h)) return;
-    const beat = Math.sin(f.t * f.hz * Math.PI * 2 + b.phase), w = f.span / 2;
+    const beat = Math.sin(f.t * f.hz * Math.PI * 2 * (1 + 1.4 * (f.scare || 0)) + b.phase), w = f.span / 2;
     const c = toPx(x, z, h);
     ctx.beginPath();
     ctx.moveTo(...toPx(x - nx * w, z - nz * w, h + beat * w * 0.5));
@@ -1934,10 +2758,17 @@ Work step by step, check the licences of the data you use, and ask me about the 
       const [x, z, dx, dz] = place(m);
       if (inView(x, z, 0)) (objectsLayer && m.behind ? behind : front).push([depthOf(x, z), m, x, z, dx, dz]);
     }
-    // Bolster: tall enough to see from far off, and under the buildings and trees layer where he walks behind them,
-    // so a house in front hides his legs and not his head.
+    // Bolster is tall enough to see from far off. Buildings, trees and hedges sit in the objects layer, so behind
+    // one of those he is drawn underneath it and whatever sticks out still shows. A hill, the Beacon included, is
+    // the ground itself: the part of him that land hides is not drawn.
+    viewK = k;
     const g = bolsterNow();
-    if (g && k >= 0.1 && inView(g.x, g.z, 0)) (objectsLayer && g.behind ? behind : front).push([depthOf(g.x, g.z), g, g.x, g.z, g.dx, g.dz]);
+    if (g && k >= 0.08 && inView(g.x, g.z, 0)) {
+      g.cover = terrainCover(g.x, g.z);
+      if (!objectsLayer && g.underBuilding) g.cover = Math.max(g.cover || 0, 3.1);
+      if ((g.cover || 0) < TALL - 0.2) (objectsLayer && (g.underBuilding || g.underTree) ? behind : front).push([depthOf(g.x, g.z), g, g.x, g.z, g.dx, g.dz]);
+    }
+    if (k >= 0.12) for (const q of gullsNear(g)) if (inView(q.x, q.z, q.h)) front.push([depthOf(q.x, q.z), q, q.x, q.z, q.dx, q.dz]);
     // The dippers sit low in open water: drawn under the buildings and trees layer, so whatever stands in front hides them.
     dippers ||= makeDippers();
     if (k >= 0.35 && inView(dippers.x, dippers.z, 0)) (objectsLayer ? behind : front).push([depthOf(dippers.x, dippers.z), dippers, dippers.x, dippers.z, 0, 0]);
@@ -2012,7 +2843,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
   function drawLights() {
     if (!lights) return;
-    if (!evening) {
+    const night = sunNow().up <= 0 && bolsterShown;
+    if (!evening && !night) {
       if (lights.width) lights.width = 0;
       return;
     }
@@ -2032,6 +2864,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
       const [px, py] = toPx(x, z, 0);
       return px > b.x - pad && px < b.x + b.width + pad && py > b.y - pad && py < b.y + b.height + pad;
     };
+    if (evening) {
     lamps ||= makeLamps();
     for (const [x, z] of lamps) {
       if (!inView(x, z)) continue;
@@ -2057,6 +2890,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
       blob(ctx, BEAM, x + dx * (half + 5), z + dz * (half + 5), 0, 4.5, 0.32 * a, true);
       blob(ctx, BEAM, x + dx * (half + 12), z + dz * (half + 12), 0, 6, 0.16 * a, true);
     }
+    }
+    if (night) drawLantern(ctx);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
   }
@@ -2095,6 +2930,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const had = behind.length;
     draw();
     drawLights();
+    paintRumour();
     if (objectsLayer && (had || behind.length)) viewer.forceRedraw(); // so the movers between the layers move too
     requestAnimationFrame(frame);
   }
