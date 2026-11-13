@@ -6,11 +6,12 @@
 //   --ss N         render every tile N times as large each way and average it down: smooth edges (1 = off)
 //   --pass objects a mask instead: white where buildings and trees stand above the ground (into out/tiles-<scale>-objects/)
 //   --look 135     the compass direction the camera looks in; 45 (north-east) is the default, other views get -v<look>
+//   --resume       with all: keep the tiles that are already there, to go on after a run that was cut short
 //
 // On a machine without a graphics card: ANGLE=swiftshader renders in software (slowly). CHROME=<path> uses another
 // Chromium than the one Playwright installed.
 import { createServer } from 'node:http';
-import { readFile, mkdir, writeFile, stat } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, stat } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import { chromium } from 'playwright';
 
@@ -57,7 +58,9 @@ async function openScene(scale, kuwahara, pass, look, ss) {
 
 async function renderTo(page, file, x, y, w, h) {
   const url = await page.evaluate(([x, y, w, h]) => window.renderTile(x, y, w, h), [x, y, w, h]);
-  await writeFile(file, Buffer.from(url.split(',')[1], 'base64'));
+  // Written under another name first, so a tile that is there is always a whole one.
+  await writeFile(`${file}.part`, Buffer.from(url.split(',')[1], 'base64'));
+  await rename(`${file}.part`, file);
 }
 
 const mode = process.argv[2];
@@ -81,10 +84,13 @@ if (mode === 'crop') {
   const dir = join(ROOT, 'out', `tiles-${scale}${pass === 'color' ? '' : `-${pass}`}${look === 45 ? '' : `-v${look}`}`);
   await mkdir(dir, { recursive: true });
   const cols = Math.ceil(info.width / tile), rows = Math.ceil(info.height / tile);
+  const resume = process.argv.includes('--resume');
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const w = Math.min(tile, info.width - c * tile), h = Math.min(tile, info.height - r * tile);
-      await renderTo(page, join(dir, `${String(r).padStart(2, '0')}_${String(c).padStart(2, '0')}.png`), c * tile, r * tile, w, h);
+      const file = join(dir, `${String(r).padStart(2, '0')}_${String(c).padStart(2, '0')}.png`);
+      if (resume && (await stat(file).catch(() => null))?.size) continue;
+      await renderTo(page, file, c * tile, r * tile, w, h);
     }
     console.log(`row ${r + 1}/${rows}`);
   }
