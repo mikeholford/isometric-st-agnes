@@ -14,7 +14,7 @@ git -C "$tmp" init -q -b gh-pages
 git -C "$tmp" add -A
 git -C "$tmp" -c user.name="$(git config user.name)" -c user.email="$(git config user.email)" \
   commit -q -m "Publish map ($(git rev-parse --short HEAD))"
-git -C "$tmp" push -q -f "$remote" gh-pages
+git -C "$tmp" -c http.postBuffer=524288000 push -q -f "$remote" gh-pages  # one request for the whole pyramid: the default buffer makes GitHub drop it
 sha=$(git -C "$tmp" rev-parse HEAD)
 echo "Pushed $(find site -type f | wc -l) files to gh-pages"
 
