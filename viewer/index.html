@@ -1362,7 +1362,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     truck: { half: 7.6, sort: true, boxes: [[-7.4, 7.4, 1.2, 0.45, 1.05, 'dark'], [-7.4, 5.0, 1.25, 1.05, 3.9, 'load'], [5.3, 7.6, 1.22, 0.55, 3.15, 'cab']] },
     bike: { half: 0.9, bike: true, boxes: [[-0.85, 0.85, 0.05, 0.3, 0.75, 'dark'], [-0.32, 0.14, 0.2, 0.8, 1.42, 'body'], [-0.12, 0.08, 0.1, 1.42, 1.66, 'load']] },
   };
-  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, GIANT = 4, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
+  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, GIANT = 4, SHADE = 5, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
   let lanes = [], movers = [], layer = null;
   const outs = new Map(), entries = { car: {}, bike: [], walk: [] };
   let exits = new Set();
@@ -1615,8 +1615,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
 
   // A face in the light of the hour: the sky lights every face a little, the sun those turned toward it. With the sun
   // down the faces keep an even tone, and the light map over them brings the night.
-  const shade = (rgb, nx, ny, nz) => {
-    const k = Math.min(1.05, 0.5 + 0.2 * (1 - LIGHT.sun) + 0.62 * LIGHT.sun * Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2]));
+  const shade = (rgb, nx, ny, nz, glow = 0) => {
+    const k = Math.min(1.05, 0.5 + 0.2 * (1 - LIGHT.sun) + 0.62 * LIGHT.sun * Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2])) + glow;
     return `rgb(${Math.round(rgb[0] * k)},${Math.round(rgb[1] * k)},${Math.round(rgb[2] * k)})`;
   };
 
@@ -1662,7 +1662,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
   function drawMover(ctx, m, x, z, dx, dz) {
     if (m.mode === WALK) return drawWalker(ctx, m, x, z, dx, dz);
     if (m.mode === SWIM) return drawDippers(ctx, m);
-    if (m.mode === GIANT) return drawBolster(ctx, m, x, z, dx, dz);
+    if (m.mode === GIANT) return drawBolster(ctx, m);
+    if (m.mode === SHADE) return drawBolsterShadow(ctx, m.of);
     const V = VEHICLES[m.type];
     drawBoxes(ctx, x, z, dx, dz, V.boxes, (role) => (role === 'dark' ? DARK : role === 'load' ? m.load : m.paint), { sort: V.sort, outline: !V.bike });
   }
@@ -1757,7 +1758,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // has a number (minutes since 1970 divided by twenty), and that number seeds the dice that pick the road or path
   // he starts on and every turn he takes. So the time of a find is proof of the place, and a link with the time in
   // it shows anyone where he was. Click him and he is gone for you until his next leg starts somewhere else.
-  const LEG = 20 * 60, STRIDE = 1.9, TALL = 6.4; // seconds, metres a second, metres
+  const LEG = 20 * 60, STRIDE = 1.9, TALL = 6.4; // seconds, metres a second on level ground, metres
   const dice = (seed) => () => { // mulberry32: the same numbers in every browser
     let t = (seed += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -1771,7 +1772,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
     walkable ||= lanes.map((l, i) => i).filter((i) => lanes[i].ww > 0 && lanes[i].len > 5);
     const rnd = dice(n), route = [], cum = [0];
     let li = walkable[Math.floor(rnd() * walkable.length)];
-    while (cum[cum.length - 1] < LEG * STRIDE + 50 && route.length < 2000) {
+    // A quarter more road than twenty minutes on the level take: down a gentle slope he covers more ground.
+    while (cum[cum.length - 1] < LEG * STRIDE * 1.25 + 50 && route.length < 2000) {
       route.push(li);
       cum.push(cum[cum.length - 1] + lanes[li].len);
       const l = lanes[li], all = (outs.get(l.b) || []).filter((j) => lanes[j].ww > 0);
@@ -1781,20 +1783,88 @@ Work step by step, check the licences of the data you use, and ask me about the 
       else li = from[Math.floor(rnd() * from.length)];
     }
     if (legs.size > 8) legs.clear();
-    legs.set(n, { route, cum });
+    legs.set(n, { n, route, cum, feet: null, prints: new Map() });
     return legs.get(n);
   }
-  // Where he is at a time (seconds since 1970), or null before the roads are loaded.
+  // The spot s metres along a lane, and the way the lane runs there.
+  function onLane(l, s) {
+    let i = 0, j = l.cum.length - 2;
+    while (i < j) {
+      const mid = (i + j + 1) >> 1;
+      if (l.cum[mid] <= s) i = mid; else j = mid - 1;
+    }
+    const p = l.p[i], q = l.p[i + 1], seg = l.cum[i + 1] - l.cum[i] || 1, f = (s - l.cum[i]) / seg;
+    return { x: p[0] + (q[0] - p[0]) * f, z: p[1] + (q[1] - p[1]) * f, dx: (q[0] - p[0]) / seg, dz: (q[1] - p[1]) / seg };
+  }
+  // The spot d metres along the route of a leg: the lane, how far along it, the place and the way the route runs.
+  // A lane does not always end just where the next one begins, so he crosses a junction in a straight line, from
+  // two and a half metres before it to as far after it. Only where the route leaves the map and comes in elsewhere
+  // is he gone from one spot and at the other.
+  function routeAt(leg, d) {
+    const { route, cum } = leg;
+    let lo = 0, hi = route.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (cum[mid] <= d) lo = mid; else hi = mid - 1;
+    }
+    const l = lanes[route[lo]], s = Math.min(l.len, Math.max(0, d - cum[lo]));
+    const early = s < l.len / 2, o = lanes[route[early ? lo - 1 : lo + 1]];
+    if (o) {
+      const r = Math.min(2.5, l.len / 2, o.len / 2), edge = early ? s : l.len - s;
+      const [from, to] = early ? [o, l] : [l, o], end = from.p[from.p.length - 1], start = to.p[0];
+      if (edge < r && Math.hypot(start[0] - end[0], start[1] - end[1]) < 30) {
+        const a = onLane(from, from.len - r), c = onLane(to, r), f = early ? (r + s) / (2 * r) : (r - edge) / (2 * r);
+        const len = Math.hypot(c.x - a.x, c.z - a.z) || 1;
+        return { lane: l, s, x: a.x + (c.x - a.x) * f, z: a.z + (c.z - a.z) * f, dx: (c.x - a.x) / len, dz: (c.z - a.z) / len };
+      }
+    }
+    return { lane: l, s, ...onLane(l, s) };
+  }
+  // The way he faces d metres along: across a few metres of route, so he turns a corner and does not snap round it.
+  function headingAt(leg, d, reach = 1.6) {
+    const p = routeAt(leg, d - reach), q = routeAt(leg, d + reach), len = Math.hypot(q.x - p.x, q.z - p.z);
+    return len > 0.05 ? [(q.x - p.x) / len, (q.z - p.z) / len] : [q.dx, q.dz];
+  }
+  // How steep the route is d metres along: metres up for every metre on, over the ten metres around him.
+  function slopeAt(leg, d) {
+    const p = routeAt(leg, d - 5), q = routeAt(leg, d + 5);
+    return (heightAt(q.x, q.z) - heightAt(p.x, p.z)) / Math.max(1, Math.hypot(q.x - p.x, q.z - p.z));
+  }
+
+  // His walk. A leg swings like a pendulum of its own length: there and back takes 2π√(L/g), so one step, a single
+  // swing, takes half of that. His hip is 3.4 m up, which makes a step of 1.85 s: slow and heavy. At 1.9 m/s on
+  // level ground each step is 3.5 m long. The beat never changes; what changes with the land is the length of the
+  // step. Uphill he takes shorter steps, on a gentle fall slightly longer ones, and down a steep slope he brakes
+  // and they shorten again: Tobler's rule for walkers (1993), exp(-3.5 |slope + 0.05|), set to 1 on the level.
+  //
+  // So where his feet come down follows from the leg alone: every footfall of the twenty minutes is laid out along
+  // the route before he takes the first, and a foot on the ground stays on its spot until it is lifted. The time in
+  // a link still gives the place: the step he is in and how far into it.
+  const HIP = 0.53 * TALL, ANKLE = 0.25, SHANK = (HIP - ANKLE) * 0.505; // hip joint and ankle above the ground, thigh and shin
+  const STEP_TIME = Math.PI * Math.sqrt(HIP / 9.81), STEP = STRIDE * STEP_TIME;
+  const pace = (slope) => Math.min(1.2, Math.max(0.35, Math.exp(-3.5 * Math.abs(slope + 0.05) + 0.175)));
+  // Until this leg he kept one pace up hill and down dale. Legs before it still do, so a link to an older find
+  // shows the same spot as on the day. When this goes live, set it to the leg of that hour: Math.floor(Date.now() / 1200000).
+  const HILLS_FROM = 1495512; // 14 November 2026, 00:00 UTC
+  // feet[j] is how far along the route footfall j - 1 lands: he starts with one foot half a step behind him.
+  function footfalls(leg) {
+    if (leg.feet) return leg.feet;
+    const hills = leg.n >= HILLS_FROM, count = Math.ceil(LEG / STEP_TIME) + 4, feet = new Float64Array(count);
+    const first = STEP * (hills ? pace(slopeAt(leg, 0)) : 1);
+    feet[0] = -first / 2, feet[1] = first / 2;
+    for (let j = 2; j < count; j++) feet[j] = feet[j - 1] + STEP * (hills ? pace(slopeAt(leg, feet[j - 1])) : 1);
+    return (leg.feet = feet);
+  }
+  // Where he is at a time (seconds since 1970), or null before the roads are loaded. In step k his weight is on
+  // footfall k, and he moves from halfway between the last two footfalls to halfway between the next two: a little
+  // faster as a foot lands and slower as he rises over it, as a body does that vaults over a stiff leg.
   function bolsterAt(t) {
     if (!lanes.length) return null;
-    const n = Math.floor(t / LEG), since = t - n * LEG, { route, cum } = bolsterLeg(n), d = since * STRIDE;
-    let k = 0;
-    while (k < route.length - 1 && cum[k + 1] < d) k++;
-    const l = lanes[route[k]], s = Math.min(l.len, d - cum[k]);
-    let i = 0;
-    while (i < l.cum.length - 2 && l.cum[i + 1] < s) i++;
-    const a = l.p[i], b = l.p[i + 1], seg = l.cum[i + 1] - l.cum[i] || 1, f = (s - l.cum[i]) / seg;
-    return { n, since, lane: l, s, x: a[0] + (b[0] - a[0]) * f, z: a[1] + (b[1] - a[1]) * f, dx: (b[0] - a[0]) / seg, dz: (b[1] - a[1]) / seg };
+    const n = Math.floor(t / LEG), since = t - n * LEG, leg = bolsterLeg(n), feet = footfalls(leg);
+    const k = Math.min(feet.length - 3, Math.floor(since / STEP_TIME)), ph = since / STEP_TIME - k;
+    const from = (feet[k] + feet[k + 1]) / 2, to = (feet[k + 1] + feet[k + 2]) / 2;
+    const d = from + (to - from) * (ph + (0.15 * Math.sin(2 * Math.PI * ph)) / (2 * Math.PI));
+    return { n, since, leg, feet, k, ph, d, ...routeAt(leg, d) };
   }
   const bolsterEl = document.getElementById('bolster');
   const unix = () => Date.now() / 1000;
@@ -1890,29 +1960,187 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // George Cruikshank's drawing in Hunt's book a belted, long-sleeved tunic to the knee and bare lower legs. No
   // club: none is told of or drawn. The straw beard and the leaves in his hair nod to the giant of the village's
   // Bolster Festival. Nearly four times a walker.
-  const TUNIC = [136, 98, 58], BELT = [58, 44, 34], FLESH = [214, 170, 136], MANE = [92, 58, 36], STRAW = [216, 188, 122], LEAF = [78, 122, 54], STEEL = [176, 182, 188], EYE = [40, 34, 30];
-  function drawBolster(ctx, g, x, z, dx, dz) {
-    const K = TALL / 1.72, stride = (g.since * STRIDE) / (0.75 * K) * Math.PI;
-    const sw = Math.sin(stride) * 0.2, arm = Math.sin(stride) * 0.16, bob = Math.abs(Math.cos(stride)) * 0.03;
-    const boxes = [
-      [sw - 0.1, sw + 0.1, 0.085, 0, 0.52, FLESH, -0.14],
-      [-sw - 0.1, -sw + 0.1, 0.085, 0, 0.52, FLESH, 0.14],
-      [-0.18, 0.18, 0.28, 0.46 + bob, 1.3 + bob, TUNIC],
-      [-0.19, 0.19, 0.29, 0.8 + bob, 0.87 + bob, BELT],
-      [0.19, 0.215, 0.03, 0.6 + bob, 0.84 + bob, STEEL, 0.17],
-      [-arm - 0.08, -arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, -0.36],
-      [-arm - 0.07, -arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, -0.36],
-      [arm - 0.08, arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, 0.36],
-      [arm - 0.07, arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, 0.36],
-      [-0.14, 0.14, 0.15, 1.3 + bob, 1.6 + bob, FLESH],
-      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, -0.07],
-      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, 0.07],
-      [0.07, 0.2, 0.14, 1.17 + bob, 1.42 + bob, STRAW],
-      [-0.2, -0.12, 0.16, 1.24 + bob, 1.58 + bob, MANE],
-      [-0.18, 0.1, 0.17, 1.56 + bob, 1.72 + bob, MANE],
-      [-0.19, 0.115, 0.18, 1.58 + bob, 1.63 + bob, LEAF],
-    ].map(([a, b, w, h0, h1, c, right = 0]) => [a * K, b * K, w * K, h0 * K, h1 * K, c, right * K]);
-    drawBoxes(ctx, x, z, dx, dz, boxes, () => TUNIC, { sort: true, outline: true });
+  //
+  // He is a jointed figure of blocks, like a wooden model. Points are [east, up, south] in metres, up counted from
+  // the same level as the heights of the land.
+  const TUNIC = [136, 98, 58], BELT = [58, 44, 34], FLESH = [214, 170, 136], MANE = [92, 58, 36], STRAW = [216, 188, 122], LEAF = [78, 122, 54], STEEL = [176, 182, 188], EYE = [40, 34, 30], IRON = [46, 42, 40], FLAME = [255, 222, 150];
+  const plus = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const unit = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+  const UP = [0, 1, 0];
+  // A point in the round to map pixels, and the way the camera looks.
+  const flat = (p) => [(p[0] * VIEW.c + p[2] * VIEW.s) * M.scale + M.width / 2, (M.top - ((p[0] * VIEW.s - p[2] * VIEW.c) / 2 + p[1] * COS30)) * M.scale];
+  const sight = () => [COS30 * VIEW.s, -0.5, -COS30 * VIEW.c];
+  // A block: eight corners, four below and four above, from an origin and three directions. f runs forward, r to
+  // the right, h up; front and back at the top may differ from those at the bottom (a hem pushed out by a knee).
+  // `over` draws it after its neighbours at the same depth (a belt over a tunic).
+  function block(o, F, R, U, [f0, f1], [r0, r1], [h0, h1], rgb, over = 0, [g0, g1] = [f0, f1]) {
+    const at = (f, r, h) => plus(plus(plus(o, F, f), R, r), U, h);
+    return { rgb, over, c: [at(f0, r0, h0), at(f1, r0, h0), at(f1, r1, h0), at(f0, r1, h0), at(g0, r0, h1), at(g1, r0, h1), at(g1, r1, h1), at(g0, r1, h1)] };
+  }
+  // A limb from one joint to the next: w wide across the body, d deep.
+  function limb(a, b, R, w, d, rgb, over = 0) {
+    const U = unit(plus(b, a, -1)), F = unit(cross(R, U)), len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    return block(a, F, unit(cross(U, F)), U, [-d, d], [-w, w], [0, len], rgb, over);
+  }
+  const FACES = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
+
+  // His pose at this instant: every block of him, the feet first.
+  function bolsterBody(g) {
+    if (g.body) return g.body;
+    const { leg, feet, k, ph } = g, out = [];
+    const [hx, hz] = headingAt(leg, g.d), F = [hx, 0, hz], R = [-hz, 0, hx];
+    const slope = slopeAt(leg, g.d), step = feet[k + 2] - feet[k + 1];
+    // A footfall: the ball of the foot, left and right of the route by turns, on the ground as it lies there.
+    const print = (j) => {
+      if (!leg.prints.has(j)) {
+        const at = routeAt(leg, feet[j]), [fx, fz] = headingAt(leg, feet[j]), side = j % 2 ? -1 : 1;
+        const x = at.x - fz * side * 0.44, z = at.z + fx * side * 0.44;
+        const tilt = Math.atan2(heightAt(x + fx * 0.4, z + fz * 0.4) - heightAt(x - fx * 0.6, z - fz * 0.6), 1);
+        leg.prints.set(j, { p: [x, heightAt(x, z), z], f: [fx, fz], tilt, side });
+      }
+      return leg.prints.get(j);
+    };
+    const down = print(k + 1), last = print(k), next = print(k + 2);
+    // The foot in the air: it stays down for the first seventh of the step, while the weight comes over, then
+    // swings through to its next place, slow at both ends and quickest in the middle, as a pendulum does.
+    const u = Math.min(1, Math.max(0, (ph - 0.14) / 0.86)), go = (1 - Math.cos(Math.PI * u)) / 2;
+    const air = plus(last.p, plus(next.p, last.p, -1), go);
+    air[1] = Math.max(air[1], heightAt(air[0], air[2])) + 0.42 * Math.sin(Math.PI * u) ** 1.3;
+    const swing = {
+      p: air, side: last.side,
+      f: unit([last.f[0] + (next.f[0] - last.f[0]) * go, 0, last.f[1] + (next.f[1] - last.f[1]) * go]),
+      // The heel comes up before the foot leaves the ground; in the air the toes point down, then up to land.
+      tilt: u > 0 ? last.tilt + (next.tilt - last.tilt) * go + Math.sin(Math.PI * u) * (0.5 * u - 0.55 * (1 - u)) - 0.35 * (1 - u) ** 3 : last.tilt - 0.35 * (ph / 0.14),
+    };
+    const stance = { p: down.p, side: down.side, f: [down.f[0], 0, down.f[1]], tilt: down.tilt };
+    // The hips: over the route, swaying toward the foot that bears the weight, lowest with both feet down and
+    // highest over the standing leg. Four fifths of the drop a stiff leg would give; the knees take the rest.
+    const reach = HIP - ANKLE, drop = 0.8 * (reach - Math.sqrt(Math.max(0.1, reach * reach - (step * step) / 4)));
+    const ground = heightAt(g.x, g.z), sway = down.side * 0.16 * Math.sin(Math.PI * ph);
+    const hips = [g.x + R[0] * sway, ground + HIP - (drop * (1 + Math.cos(2 * Math.PI * ph))) / 2, g.z + R[2] * sway];
+    const knees = [];
+    for (const foot of [stance, swing]) {
+      // The foot turns about its ball; the ankle sits over the heel end. Then the knee, bent forward as far as the
+      // leg has length to spare.
+      const c = Math.cos(foot.tilt), sn = Math.sin(foot.tilt);
+      const ff = plus([foot.f[0] * c, 0, foot.f[2] * c], UP, sn), fu = plus([-foot.f[0] * sn, 0, -foot.f[2] * sn], UP, c), fr = [-foot.f[2], 0, foot.f[0]];
+      out.push(block(foot.p, ff, fr, fu, [-0.78, 0.3], [-0.2, 0.2], [0, 0.24], FLESH));
+      const ankle = plus(plus(foot.p, ff, -0.5), fu, ANKLE), hip = plus(hips, R, foot.side * 0.4);
+      const span = plus(ankle, hip, -1), far = Math.min(2 * SHANK, Math.hypot(span[0], span[1], span[2])), along = unit(span);
+      const fore = unit(plus(F, along, -dot(F, along)));
+      const knee = plus(plus(hip, along, far / 2), fore, Math.sqrt(Math.max(0, SHANK * SHANK - (far * far) / 4)));
+      knees.push(dot(plus(knee, hips, -1), F));
+      out.push(limb(hip, knee, R, 0.3, 0.3, FLESH), limb(knee, ankle, R, 0.24, 0.25, FLESH));
+    }
+    // He leans into a hill and back from a fall, and his head stays on the road ahead.
+    const lean = Math.min(0.4, Math.max(-0.2, 0.07 + (slope > 0 ? 1.1 : 0.8) * Math.atan(slope)));
+    const bU = plus([F[0] * Math.sin(lean), 0, F[2] * Math.sin(lean)], UP, Math.cos(lean)), bF = plus([F[0] * Math.cos(lean), 0, F[2] * Math.cos(lean)], UP, -Math.sin(lean));
+    // The tunic: a skirt to the knee that hangs straight and is pushed out by the knees, the body above the belt.
+    out.push(block(plus(hips, UP, -1.5), F, R, UP, [Math.min(-0.64, Math.min(...knees) - 0.42), Math.max(0.64, Math.max(...knees) + 0.42)], [-1.02, 1.02], [0, 1.62], TUNIC, 0.2, [-0.66, 0.66]));
+    out.push(block(hips, bF, R, bU, [-0.67, 0.67], [-1.04, 1.04], [0, 1.45], TUNIC, 0.3));
+    out.push(block(hips, bF, R, bU, [-0.71, 0.71], [-1.08, 1.08], [0.05, 0.32], BELT, 0.6));
+    out.push(block(plus(hips, UP, -0.85), F, R, UP, [0.68, 0.76], [0.5, 0.74], [0, 0.95], STEEL, 0.8)); // the knife at his belt
+    // The arms swing against the legs, from the shoulder, with a loose elbow. Great hands.
+    const beat = Math.cos(Math.PI * (k + ph)); // +1 as the left foot lands ahead, -1 as the right one does
+    // After dark the right arm is held out in front and carries a lantern.
+    const dark = LIGHT.lamps;
+    for (const side of [-1, 1]) {
+      const carry = side > 0 ? dark : 0, swing = 0.42 * beat * side;
+      const a = swing * (1 - 0.8 * carry) + 0.5 * carry, bend = (0.3 + 0.25 * Math.max(0, Math.sin(swing) * 2)) * (1 - carry) + 1.05 * carry;
+      const dir = (ang) => plus([bF[0] * Math.sin(ang), bF[1] * Math.sin(ang), bF[2] * Math.sin(ang)], bU, -Math.cos(ang));
+      const shoulder = plus(plus(hips, bU, 1.3), R, side * 1.27), elbow = plus(shoulder, dir(a), 1.05), wrist = plus(elbow, dir(a + bend), 0.8);
+      const hand = plus(wrist, dir(a + bend), 0.6);
+      out.push(limb(shoulder, elbow, R, 0.25, 0.27, TUNIC, 0.35), limb(elbow, wrist, R, 0.23, 0.25, TUNIC, 0.35), limb(wrist, hand, R, 0.2, 0.3, FLESH, 0.35));
+      if (carry > 0.05) {
+        // It hangs from his fist on a ring and swings a little with every step: an iron frame round a flame.
+        const hang = 0.14 * Math.sin(Math.PI * (k + ph)), top = plus(hand, R, 0.1);
+        const lamp = plus(plus(top, UP, -0.75 * Math.cos(hang)), F, 0.75 * Math.sin(hang));
+        out.push(limb(top, lamp, R, 0.04, 0.04, IRON, 0.36), block(lamp, F, R, UP, [-0.26, 0.26], [-0.26, 0.26], [-0.62, 0], FLAME, 0.37));
+        out.push(block(lamp, F, R, UP, [-0.3, 0.3], [-0.3, 0.3], [-0.7, -0.62], IRON, 0.38), block(lamp, F, R, UP, [-0.3, 0.3], [-0.3, 0.3], [0, 0.1], IRON, 0.38));
+        out.lamp = plus(lamp, UP, -0.3);
+      }
+    }
+    const nod = lean * 0.45, hU = plus([F[0] * Math.sin(nod), 0, F[2] * Math.sin(nod)], UP, Math.cos(nod)), hF = plus([F[0] * Math.cos(nod), 0, F[2] * Math.cos(nod)], UP, -Math.sin(nod));
+    const neck = plus(hips, bU, 1.45);
+    out.push(block(neck, hF, R, hU, [-0.52, 0.52], [-0.56, 0.56], [0, 1.12], FLESH, 0.4));
+    for (const side of [-1, 1]) out.push(block(neck, hF, R, hU, [0.52, 0.57], [side * 0.26 - 0.13, side * 0.26 + 0.13], [0.63, 0.82], EYE, 1));
+    out.push(block(neck, hF, R, hU, [0.26, 0.76], [-0.52, 0.52], [-0.48, 0.45], STRAW, 0.9));
+    out.push(block(neck, hF, R, hU, [-0.74, -0.45], [-0.6, 0.6], [-0.22, 1.04], MANE, 0.5));
+    out.push(block(neck, hF, R, hU, [-0.67, 0.37], [-0.63, 0.63], [0.97, 1.56], MANE, 0.7));
+    out.push(block(neck, hF, R, hU, [-0.71, 0.43], [-0.67, 0.67], [1.04, 1.23], LEAF, 0.9));
+    return (g.body = out);
+  }
+
+  // Blocks onto the map: an inked outline round the whole figure first, then every face that looks at the camera,
+  // the far blocks before the near ones.
+  function drawBlocks(ctx, blocks) {
+    const eye = sight();
+    for (const b of blocks) {
+      b.px = b.c.map(flat);
+      b.mid = b.c.reduce((m, p) => plus(m, p, 0.125), [0, 0, 0]);
+      b.far = dot(b.mid, eye) - b.over;
+    }
+    blocks.sort((p, q) => q.far - p.far);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 1.1 * INK;
+    ctx.strokeStyle = 'rgba(18,20,26,0.7)';
+    for (const b of blocks) {
+      path(ctx, hull(b.px.slice()));
+      ctx.stroke();
+    }
+    const lamp = blocks.lamp;
+    for (const b of blocks) {
+      for (const face of FACES) {
+        const [p, q, r] = face.map((i) => b.c[i]);
+        let n = unit(cross(plus(q, p, -1), plus(r, q, -1)));
+        if (dot(n, plus(p, b.mid, -1)) < 0) n = [-n[0], -n[1], -n[2]];
+        if (dot(n, eye) >= 0) continue;
+        // A flame is its own light; the rest of him is lit by the sky and, after dark, by the lantern on the side
+        // that is turned to it.
+        const glow = lamp && b.rgb !== FLAME ? 0.4 * LIGHT.lamps * Math.max(0, dot(n, unit(plus(lamp, b.mid, -1)))) : 0;
+        poly(ctx, face.map((i) => b.px[i]), b.rgb === FLAME ? `rgb(${FLAME})` : shade(b.rgb, n[0], n[1], n[2], glow));
+      }
+    }
+  }
+  function drawBolster(ctx, g) {
+    drawBlocks(ctx, bolsterBody(g));
+  }
+
+  // His shadow, cast by the real sun. The shadow of a point lands where the sunbeam through it meets the land: down
+  // the beam in steps, never further than the beam is above the ground, then halving in on the spot. So his shadow
+  // shortens up a slope that faces the sun and stretches down one that falls away. A real shadow is crisp at the
+  // feet and soft at the head, because the sun is a disc and not a point: the shadow is laid down six times, each
+  // a little aside, further aside the longer the beam.
+  function castShadow(p) {
+    const level = Math.hypot(SUN[0], SUN[2]) || 1e-6, sx = -SUN[0] / level, sz = -SUN[2] / level, fall = SUN[1] / level;
+    const above = (s) => p[1] - fall * s - heightAt(p[0] + sx * s, p[2] + sz * s);
+    let near = 0, far = 0;
+    for (let i = 0; i < 200 && above(far) > 0; i++) near = far, far += Math.max(0.3, above(far) / (fall + 0.8));
+    for (let i = 0; i < 6; i++) {
+      const mid = (near + far) / 2;
+      if (above(mid) > 0) near = mid; else far = mid;
+    }
+    const x = p[0] + sx * far, z = p[2] + sz * far;
+    return [x, heightAt(x, z), z, far];
+  }
+  const ASIDE = [[0, 0], [1, 0], [0.31, 0.95], [-0.81, 0.59], [-0.81, -0.59], [0.31, -0.95]];
+  function drawBolsterShadow(ctx, g) {
+    const sun = LIGHT.sun;
+    if (sun < 0.02) return;
+    const casts = bolsterBody(g).map((b) => b.c.map(castShadow));
+    ctx.fillStyle = `rgba(14,18,30,${(1 - (1 - 0.36 * sun) ** (1 / ASIDE.length)).toFixed(4)})`;
+    for (const [ax, az] of ASIDE) {
+      ctx.beginPath();
+      for (const cast of casts) {
+        const pts = hull(cast.map(([x, y, z, far]) => flat([x + ax * far * 0.03, y, z + az * far * 0.03])));
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath();
+      }
+      ctx.fill(); // one fill for all of him: where two blocks shade the same ground it is no darker
+    }
   }
 
   // A bird: two wings that beat, with its shadow far off on the ground.
@@ -1964,8 +2192,12 @@ Work step by step, check the licences of the data you use, and ask me about the 
     }
     // Bolster: tall enough to see from far off, and under the buildings and trees layer where he walks behind them,
     // so a house in front hides his legs and not his head.
+    // His shadow lies on the ground: under the buildings and trees, and under everyone who walks through it.
     const g = bolsterNow();
-    if (g && k >= 0.1 && inView(g.x, g.z, 0)) (objectsLayer && g.behind ? behind : front).push([depthOf(g.x, g.z), g, g.x, g.z, g.dx, g.dz]);
+    if (g && k >= 0.1 && inView(g.x, g.z, 0)) {
+      (objectsLayer && g.behind ? behind : front).push([depthOf(g.x, g.z), g, g.x, g.z, g.dx, g.dz]);
+      (objectsLayer ? behind : front).push([Infinity, { mode: SHADE, of: g, alpha: g.alpha }, g.x, g.z, 0, 0]);
+    }
     // The dippers sit low in open water: drawn under the buildings and trees layer, so whatever stands in front hides them.
     dippers ||= makeDippers();
     if (k >= 0.35 && inView(dippers.x, dippers.z, 0)) (objectsLayer ? behind : front).push([depthOf(dippers.x, dippers.z), dippers, dippers.x, dippers.z, 0, 0]);
@@ -2147,6 +2379,19 @@ Work step by step, check the licences of the data you use, and ask me about the 
       }
       blob(map, WHITE, x + dx * (half + 5), z + dz * (half + 5), 0, 5.5, 0.7 * a, true);
       blob(map, WHITE, x + dx * (half + 12), z + dz * (half + 12), 0, 7.5, 0.4 * a, true);
+    }
+    // Bolster's lantern: a wide pool on the road around him that wavers as a flame does, light on the giant himself,
+    // and the flame.
+    const giant = bolsterShown, lamp = giant && bolsterBody(giant).lamp;
+    if (lamp && inView(giant.x, giant.z)) {
+      const t = unix(), a = giant.alpha * on * (1 + 0.05 * Math.sin(t * 7.3) + 0.03 * Math.sin(t * 12.7));
+      const up = lamp[1] - heightAt(lamp[0], lamp[2]);
+      blob(map, POOL, lamp[0], lamp[2], 0, 24, 0.95 * a, true);
+      blob(map, POOL, lamp[0], lamp[2], up, 7, 0.9 * a);
+      if (!(objectsLayer && giant.behind)) {
+        blob(ctx, LAMP, lamp[0], lamp[2], up, 2.2, 0.9 * a);
+        blob(ctx, BEAM, lamp[0], lamp[2], up, 0.7, a);
+      }
     }
     ctx.globalAlpha = map.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';

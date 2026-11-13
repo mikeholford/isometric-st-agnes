@@ -24,6 +24,16 @@ The giant of the St Agnes legend is always out walking somewhere on the map: on 
 
 He is drawn from the old sources: Robert Hunt (1865) and George Cruikshank's drawing in Hunt's book give a belted tunic to the knee, bare lower legs, great hands and a knife, and no club. The beard and the leaves in his hair nod to the village's Bolster Festival. His story is on the map at the Beacon, Chapel Porth and the Bolster Bank.
 
+He walks as a body of his size would. A leg swings like a pendulum of its own length, so with his hip 3.4 m up a step takes π√(L/g) = 1.85 s, and at 1.9 m/s on level ground it is 3.5 m long. The beat stays the same; the land changes the length of the step: shorter uphill, a little longer down a gentle fall, shorter again where he has to brake (Tobler's hiking function). Every footfall of a leg is laid out along the route before he takes the first (`footfalls`), a foot on the ground stays on its spot until it is lifted, and he leans into a hill. All of it follows from the time, so the link still gives the place. Legs before `HILLS_FROM` keep the old steady pace, so links to older finds still show the right spot: set it to the leg in which this goes live.
+
+His shadow is cast by the real sun over St Agnes at this minute (`sunAt`), along the land as it rises and falls, crisp at his feet and soft at his head. After dark he carries a lantern that lights the road around him.
+
+## Light and lens
+
+The light on the map follows the real sun (`HOURS` in `viewer/index.html`): golden toward sunset, violet in the dusk, moonlit after, with the lamps coming on as it gets dark. A light map is multiplied with the map, so a lamp gives the ground its own colours back. The moon button turns to night or day by hand for the visit. The houses and trees keep the shadows they were rendered with (`scripts/sun.py`); only what moves has a shadow from the sun of the hour.
+
+The lens is what makes it a miniature: one small WebGL pass over a copy of the screen at about a third of its size blurs every point by how far it lies from the plane of focus, using the heights of the land, and adds bloom and a vignette. It is laid over the sharp map, so the full-size picture never goes through a shader and a phone keeps up. `?lens=off` shows the map without it.
+
 ## Pipeline
 
 Run `./build.sh` for everything. The steps:
