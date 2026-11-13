@@ -72,6 +72,7 @@ def sample(grid, res):
 
 
 def main():
+    BUILD.mkdir(parents=True, exist_ok=True)  # the first step to write there, on a fresh checkout
     dtm, dsm = mosaic("dtm"), mosaic("dsm")
     # The sea. The lidar is no help: it measured the water surface, anywhere from -3.8 to +0.4 m depending on the
     # tide when each strip was flown. The Ordnance Survey's low water mark is: the sea is OpenMap Local's tidal

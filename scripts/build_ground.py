@@ -386,7 +386,7 @@ def main():
     edge = fieldish & ((ids != np.roll(ids, 1, 0)) | (ids != np.roll(ids, 1, 1)))
     edge = ndi.binary_dilation(edge, iterations=3) & fieldish
     img[edge] = np.array((86, 122, 58), np.float32) * (0.9 + 0.2 * n1[edge])[:, None]
-    del edge, fieldish, open_land
+    del edge, fieldish, open_land, ids  # every array of this size is a gigabyte: let each go once it is done with
 
     # Pavement patterns and a little grain on the tarmac.
     pav = (cat == CAT["concrete_pavers"]) & ~road
@@ -422,7 +422,7 @@ def main():
     # Wet rock below high water is darker, with weed.
     m = rock & (dtm < HIGH_WATER)
     img[m] *= 0.8
-    del rock, step, m
+    del rock, step, m, slope, dtm
 
     # The sea: turquoise over the sand near the shore, deepening to blue; a line of foam where it meets the land,
     # broken lines of surf behind it, and long swell lines further out.
@@ -439,7 +439,7 @@ def main():
     img[swell] = img[swell] * 0.55 + np.array((150, 204, 214), np.float32) * 0.45
     glint = sea & (value_noise((NY, NX), 2, 11) > 0.93) & (n1 > 0.6)
     img[glint] = img[glint] * 0.6 + np.array((190, 226, 230), np.float32) * 0.4
-    del depth, surf, swell, glint, shore, beach, cliff, xx, yy
+    del depth, surf, swell, glint, shore, beach, cliff, xx, yy, n1, n2
 
     paint_osm(img, cat)
 

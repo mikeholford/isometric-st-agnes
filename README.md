@@ -1,6 +1,6 @@
 # Isometric St Agnes
 
-A zoomable isometric pixel-art map of St Agnes on the north coast of Cornwall: 4 × 3.5 km from Chapel Porth and Wheal Coates, over the Beacon and the village, to Trevaunance Cove and Trevellas Porth. It is rendered procedurally from open data, so it is exact, seamless and rebuilds in about twenty minutes.
+A zoomable isometric miniature of St Agnes on the north coast of Cornwall: 4 × 3.5 km from Chapel Porth and Wheal Coates, over the Beacon and the village, to Trevaunance Cove and Trevellas Porth. It is rendered procedurally from open data, so it is exact and seamless, and it rebuilds from scratch on a laptop with a graphics card.
 
 It follows [Isometric Helenaveen](https://jankeesvw.github.io/isometric-helenaveen/) by [@jankeesvw](https://github.com/jankeesvw/isometric-helenaveen), whose pipeline, renderer and viewer this is. That map is built from Dutch open data; this one swaps in what England has, and adds what a flat Dutch peat village does not need: terrain.
 
@@ -43,14 +43,16 @@ Run `./build.sh` for everything. The steps:
 3. `scripts/landmarks.py` names the places people look for and gives some their own look: the church spire, the engine houses and stacks of Wheal Coates and Blue Hills. `scripts/build_buildings.py` builds every building: a gabled roof for a simple outline, a hipped one for an L or a T, flat where the lidar is level.
 4. `scripts/build_trees.py` finds individual trees in the canopy height model (surface minus bare earth).
 5. `scripts/build_ground.py` paints the ground in a fixed palette: pasture and ploughed fields with hedges, the heather and gorse of the Beacon, mine waste, sand, slate cliffs with their beds, and a sea that deepens from turquoise to blue with surf along the shore. It bakes in the light on every slope and the shadows of land, buildings and trees.
-6. `render/scene.js` is a three.js scene with a 2:1 isometric orthographic camera, rendered tile by tile in headless Chromium by `render/run.mjs`, from all four diagonal directions (`VIEWS` in `scripts/config.py`).
-7. `./site.sh` cuts the images into Deep Zoom pyramids of WebP tiles and assembles `site/` with `viewer/index.html` (OpenSeadragon): search, named places with a story, the South West Coast Path, traffic, evening light, and a compass button that turns the map a quarter.
+6. `render/scene.js` is a three.js scene with a 2:1 isometric orthographic camera, rendered tile by tile in headless Chromium by `render/run.mjs`, from all four diagonal directions (`VIEWS` in `scripts/config.py`). The map is rendered at 8 pixels to the metre, and every tile twice as large each way and averaged down (`--ss 2`), so roof edges and tree crowns come out smooth instead of stepped. The painterly filter and the ink lines are measured in metres, so they look the same at any resolution.
+7. `./site.sh` cuts the images into Deep Zoom pyramids of WebP tiles, 512 pixels a side, and assembles `site/` with `viewer/index.html` (OpenSeadragon): search, named places with a story, the South West Coast Path, traffic, the light of the hour, and a compass button that turns the map a quarter. `map.json` tells the viewer the scale and the tile size.
 
 `./deploy.sh` publishes `site/` to the `gh-pages` branch as a single fresh commit.
 
 ## Iterating
 
-`node render/run.mjs crop <x> <y> <w> <h> --scale 4 --out out/crop.png` renders one region of the full image in a second. `node render/run.mjs crop 0 0 4000 2400 --scale 0.75` gives an overview of the whole map.
+`node render/run.mjs crop <x> <y> <w> <h> --scale 8 --ss 2 --kuwahara 2 --out out/crop.png` renders one region of the full image in a second. `node render/run.mjs crop 0 0 4000 2400 --scale 0.75` gives an overview of the whole map. `SCALE=4 SS=1 ./build.sh` is the quick build: a quarter of the pixels and no smoothing of edges.
+
+On a machine without a graphics card, `ANGLE=swiftshader` renders in software, which is slow but exact; `CHROME=<path>` picks another Chromium than the one Playwright installed.
 
 For another place in England: set the area in `scripts/config.py`, the grid square in `scripts/fetch.py` (`OS_SQUARE`), measure `GRID_FIX` in `scripts/geo.py` again, and write your own `scripts/landmarks.py`.
 

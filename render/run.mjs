@@ -2,9 +2,13 @@
 //
 //   node render/run.mjs crop <x> <y> <w> <h> [--scale 3] [--out file.png]   one region, for iterating
 //   node render/run.mjs all [--scale 3] [--tile 2048]                       every tile into out/tiles/
-//   --kuwahara N   painterly smoothing radius in pixels (0 = off)
+//   --kuwahara N   painterly smoothing radius in quarter metres (0 = off)
+//   --ss N         render every tile N times as large each way and average it down: smooth edges (1 = off)
 //   --pass objects a mask instead: white where buildings and trees stand above the ground (into out/tiles-<scale>-objects/)
 //   --look 135     the compass direction the camera looks in; 45 (north-east) is the default, other views get -v<look>
+//
+// On a machine without a graphics card: ANGLE=swiftshader renders in software (slowly). CHROME=<path> uses another
+// Chromium than the one Playwright installed.
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile, stat } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
@@ -32,16 +36,18 @@ function serve() {
   return new Promise((ok) => server.listen(0, '127.0.0.1', () => ok(server)));
 }
 
-async function openScene(scale, kuwahara, pass, look) {
+async function openScene(scale, kuwahara, pass, look, ss) {
   const server = await serve();
+  const angle = process.env.ANGLE || (process.platform === 'darwin' ? 'metal' : 'vulkan');
   const browser = await chromium.launch({
     headless: true,
-    args: [`--use-angle=${process.platform === 'darwin' ? 'metal' : 'vulkan'}`, '--ignore-gpu-blocklist', '--enable-gpu-rasterization'],
+    executablePath: process.env.CHROME || undefined,
+    args: [`--use-angle=${angle}`, '--ignore-gpu-blocklist', '--enable-gpu-rasterization', ...(angle === 'swiftshader' ? ['--enable-unsafe-swiftshader'] : [])],
   });
   const page = await browser.newPage();
   page.on('console', (m) => m.type() === 'error' && console.error('page:', m.text()));
   page.on('pageerror', (e) => console.error('page error:', e.message));
-  await page.goto(`http://127.0.0.1:${server.address().port}/render/index.html?scale=${scale}&kuwahara=${kuwahara}&pass=${pass}&look=${look}`);
+  await page.goto(`http://127.0.0.1:${server.address().port}/render/index.html?scale=${scale}&kuwahara=${kuwahara}&pass=${pass}&look=${look}&ss=${ss}`);
   await page.waitForFunction(() => window.ready || window.loadError, null, { timeout: 300_000 });
   const err = await page.evaluate(() => window.loadError);
   if (err) throw new Error(err);
@@ -59,8 +65,9 @@ const scale = parseFloat(arg('scale', '3'));
 const kuwahara = parseInt(arg('kuwahara', '0'));
 const pass = arg('pass', 'color');
 const look = parseFloat(arg('look', '45'));
+const ss = parseInt(arg('ss', '1'));
 const t0 = Date.now();
-const { page, info, close } = await openScene(scale, kuwahara, pass, look);
+const { page, info, close } = await openScene(scale, kuwahara, pass, look, ss);
 console.log(`scene ready in ${((Date.now() - t0) / 1000).toFixed(1)}s, full image ${info.width} x ${info.height}`);
 
 if (mode === 'crop') {

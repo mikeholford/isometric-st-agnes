@@ -581,10 +581,11 @@ function makeLights(scene) {
 
 const outlineShader = {
   uniforms: { tColor: { value: null }, tDepth: { value: null }, texel: { value: new THREE.Vector2() }, range: { value: 1 }, bg: { value: BACKGROUND }, radius: { value: 0 },
-    objectsPass: { value: false }, invViewProj: { value: new THREE.Matrix4() } },
+    stride: { value: 1 }, ink: { value: 1 }, objectsPass: { value: false }, invViewProj: { value: new THREE.Matrix4() } },
   vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
     uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 texel; uniform float range; uniform vec3 bg; uniform int radius;
+    uniform float stride; uniform float ink;
     uniform bool objectsPass; uniform mat4 invViewProj;
     varying vec2 vUv;
     float depthAt(vec2 uv) { return texture2D(tDepth, uv).x * range; }
@@ -593,6 +594,8 @@ const outlineShader = {
     // It flattens grain into painted areas but keeps edges, the look of a hand-coloured illustration.
     // Road pixels (alpha below 0.75, see makeGround) are skipped: a flat road would otherwise win every quadrant
     // next to it and spread over the verge.
+    // The taps lie a quarter of a metre apart (stride pixels), the grain of the ground textures, whatever the
+    // resolution of the render: a sharper render gets the same painted areas with finer edges, at the same cost.
     vec3 kuwahara(vec2 uv) {
       vec3 bestMean = texture2D(tColor, uv).rgb;
       float bestVar = 1e9;
@@ -603,7 +606,7 @@ const outlineShader = {
         for (int j = 0; j <= 4; j++) {
           for (int i = 0; i <= 4; i++) {
             if (i > radius || j > radius) continue;
-            vec4 c = texture2D(tColor, uv + dir * vec2(float(i), float(j)) * texel);
+            vec4 c = texture2D(tColor, uv + dir * vec2(float(i), float(j)) * stride * texel);
             if (c.a < 0.75) continue;
             m += c.rgb; s += c.rgb * c.rgb; n += 1.0;
           }
@@ -629,10 +632,11 @@ const outlineShader = {
       if (radius > 0 && c.a >= 0.75) c.rgb = kuwahara(vUv);
       float d = depthAt(vUv);
       float gap = 0.0;
-      gap = max(gap, depthAt(vUv + vec2(texel.x, 0.0)) - d);
-      gap = max(gap, depthAt(vUv - vec2(texel.x, 0.0)) - d);
-      gap = max(gap, depthAt(vUv + vec2(0.0, texel.y)) - d);
-      gap = max(gap, depthAt(vUv - vec2(0.0, texel.y)) - d);
+      // The neighbours are a fifth of a metre away (ink pixels), so the line keeps its weight in a sharper render.
+      gap = max(gap, depthAt(vUv + vec2(texel.x * ink, 0.0)) - d);
+      gap = max(gap, depthAt(vUv - vec2(texel.x * ink, 0.0)) - d);
+      gap = max(gap, depthAt(vUv + vec2(0.0, texel.y * ink)) - d);
+      gap = max(gap, depthAt(vUv - vec2(0.0, texel.y * ink)) - d);
       // A big step in depth means this pixel is the near side of a silhouette: ink it.
       if (gap > 2.2) c.rgb *= 0.58;
       gl_FragColor = vec4(c.rgb, 1.0);
@@ -647,6 +651,9 @@ async function main() {
   const radius = parseInt(params.get('kuwahara') || '0');
   const objectsPass = params.get('pass') === 'objects';
   const look = parseFloat(params.get('look') || '45');
+  // Supersampling: every tile is rendered ss times as large each way and then averaged down, which smooths the
+  // edges of roofs, walls and crowns that a single sample per pixel leaves jagged.
+  const ss = Math.max(1, parseInt(params.get('ss') || '1'));
   const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   renderer.setPixelRatio(1);
@@ -687,10 +694,10 @@ async function main() {
   const crop = document.createElement('canvas');
   window.renderTile = (tx, ty, tw, th) => {
     const m = 8; // margin in pixels, cropped off again below
-    const x = tx - m, y = ty - m, w = tw + 2 * m, h = th + 2 * m;
+    const x = (tx - m) * ss, y = (ty - m) * ss, w = (tw + 2 * m) * ss, h = (th + 2 * m) * ss;
     renderer.setSize(w, h, false);
     ensureTarget(w, h);
-    cam.setViewOffset(width, height, x, y, w, h);
+    cam.setViewOffset(width * ss, height * ss, x, y, w, h);
     cam.updateProjectionMatrix();
     renderer.setRenderTarget(target);
     renderer.render(scene, cam);
@@ -699,13 +706,17 @@ async function main() {
     post.uniforms.texel.value.set(1 / w, 1 / h);
     post.uniforms.range.value = cam.far - cam.near;
     post.uniforms.radius.value = radius;
+    post.uniforms.stride.value = Math.max(1, (scale * ss) / 4);
+    post.uniforms.ink.value = Math.max(1, Math.round(scale * ss * 0.2));
     post.uniforms.objectsPass.value = objectsPass;
     post.uniforms.invViewProj.value.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).invert();
     renderer.setRenderTarget(null);
     renderer.render(postScene, postCam);
     crop.width = tw;
     crop.height = th;
-    crop.getContext('2d').drawImage(renderer.domElement, m, m, tw, th, 0, 0, tw, th);
+    const ctx = crop.getContext('2d');
+    ctx.imageSmoothingQuality = 'high'; // each pixel the mean of the ss by ss it was rendered as
+    ctx.drawImage(renderer.domElement, m * ss, m * ss, tw * ss, th * ss, 0, 0, tw, th);
     return crop.toDataURL('image/png');
   };
   window.sceneInfo = { width, height, scale, top: cam.top, look, area };
