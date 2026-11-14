@@ -18,6 +18,9 @@ rolled up along the left of the roof.
                                                  picture.jpg, or --onto another): where in the picture, in its pixels,
                                                  and which way the car points, in degrees clockwise from north.
                                                  Several cars: 1340,925,45/600,300,135
+  uv run deep/models/defender.py --sprites       the car for the viewer to drive about: from each of the map's four
+                                                 views, pointing sixteen ways, with its shadow, as sheets of
+                                                 pictures in out/sprites/defender/ (site.sh takes them from there)
   --samples 64    rays through every pixel
   --device cpu    cpu or gpu
   --bag           with the black bag on the roof, as on the mountain road
@@ -554,6 +557,34 @@ def main():
     root, car = build(bag=flag('bag'), plate=arg('plate', ''))
     floor = ground()
     render = lambda path: (setattr(scene.render, 'filepath', path), bpy.ops.render.render(write_still=True))
+    if flag('sprites'):
+        # For the viewer: a sheet of sixteen pictures to each of the map's views, the car pointing a sixteenth of a
+        # turn further in each, north first. The spot under the middle of the car is the middle of its picture, and
+        # the shadow is in the picture too. Three sizes, so a phone far out never loads the big one.
+        import json
+        out = ROOT + '/out/sprites/defender'
+        os.makedirs(out, exist_ok=True)
+        floor.is_shadow_catcher = True
+        metres, sharp, ways, across = 10.0, 64, 16, 4
+        frame = round(metres * sharp)
+        cameras = [ob for ob in bpy.data.objects if ob.type == 'CAMERA']
+        for look in (45, 135, 225, 315):
+            for ob in [ob for ob in bpy.data.objects if ob.type == 'CAMERA']:
+                bpy.data.objects.remove(ob)
+            map_camera(look, metres, frame)
+            sheet = Image.new('RGBA', (frame * across, frame * (ways // across)), (0, 0, 0, 0))
+            for i in range(ways):
+                heading(root, 360 / ways * i)
+                render(f'{out}/frame.png')
+                sheet.paste(Image.open(f'{out}/frame.png'), (frame * (i % across), frame * (i // across)))
+            for size in (64, 32, 16):
+                small = sheet if size == sharp else sheet.resize((sheet.width * size // sharp, sheet.height * size // sharp), Image.LANCZOS)
+                small.save(f'{out}/defender-{look}-{size}.webp', quality=88, method=6)
+            print('view', look, 'done', flush=True)
+        os.remove(f'{out}/frame.png')
+        json.dump({'metres': metres, 'ways': ways, 'across': across, 'sizes': [16, 32, 64], 'looks': [45, 135, 225, 315], 'half': 2.4,
+                   'file': 'defender-{look}-{size}.webp'}, open(f'{out}/sprite.json', 'w'))
+        return
     if place:
         # Stood in a deep place: rendered as the map sees it, at the sharpness of the deep tiles, with its shadow on
         # a floor that shows nothing but shadow, and laid over the picture of the place.

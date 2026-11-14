@@ -1397,7 +1397,61 @@ Work step by step, check the licences of the data you use, and ask me about the 
       }
     });
     for (let i = 0; i < 3; i++) spawnFlock(0.2 + Math.random() * 0.6);
+    addRover();
     openBolsterLink();
+  }
+
+  // The Land Rover: one car in the traffic is a slate blue Defender 110, and it is not drawn from boxes like the
+  // rest. It is a picture of the car as built in Blender (deep/models/defender.py), rendered with the map's own
+  // camera and sun: sixteen pictures to a view, the car pointing a sixteenth of a turn further in each, its shadow
+  // with it. The sheets come in three sizes (sprite.json): the small one is fetched with the page, the larger
+  // ones only when the zoom asks for them, so a phone that never zooms in never pays for them. It sets out from
+  // the church, drives like any other car, and comes back in at the edge of the map when it has driven off it.
+  const ROVER = { info: null, sheets: new Map() };
+  fetch('sprites/defender/sprite.json').then((r) => (r.ok ? r.json() : null)).then((info) => { ROVER.info = info; }).catch(() => {});
+  function addRover() {
+    const church = gridToLocal(172029, 50735);
+    let start = -1, near = Infinity;
+    lanes.forEach((l, i) => {
+      const d = Math.hypot(l.p[0][0] - church.x, l.p[0][1] - church.z);
+      if (l.w > 0 && l.c !== 'service' && d < near) near = d, start = i;
+    });
+    if (start < 0) return;
+    const m = newMover(start, 0, CAR);
+    m.type = 'car', m.rover = true, m.half = 2.4, m.pace = 0.85; // thirty years old: in no hurry
+    movers.push(m);
+  }
+  // The sheet for the view on screen, as sharp as the zoom asks for (device pixels to the metre), or till that
+  // one has arrived the sharpest smaller one that has.
+  function roverSheet(perMetre) {
+    const info = ROVER.info;
+    if (!info || !info.looks.includes(VIEW.look)) return null;
+    const want = info.sizes.find((size) => size >= perMetre * 0.95) || info.sizes[info.sizes.length - 1];
+    let best = null;
+    for (const size of info.sizes) {
+      if (size > want) break;
+      const key = `${VIEW.look}-${size}`;
+      let sheet = ROVER.sheets.get(key);
+      if (!sheet && (size === want || size === info.sizes[0])) {
+        sheet = { img: new Image(), size, ready: false };
+        sheet.img.onload = () => (sheet.ready = true);
+        sheet.img.src = 'sprites/defender/' + info.file.replace('{look}', VIEW.look).replace('{size}', size);
+        ROVER.sheets.set(key, sheet);
+      }
+      if (sheet?.ready) best = sheet;
+    }
+    return best;
+  }
+  // Draws the Land Rover where the car is and says so; says no while there is no picture of it yet.
+  function drawRover(ctx, x, z, dx, dz) {
+    const sheet = roverSheet(ctx.getTransform().a * M.scale);
+    if (!sheet) return false;
+    const info = ROVER.info, turn = (Math.atan2(dx, -dz) / (2 * Math.PI)) * info.ways; // north is up the map's z, east along x
+    const i = ((Math.round(turn) % info.ways) + info.ways) % info.ways;
+    const cell = info.metres * sheet.size, size = info.metres * M.scale, [px, py] = toPx(x, z, 0);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(sheet.img, (i % info.across) * cell, Math.floor(i / info.across) * cell, cell, cell, px - size / 2, py - size / 2, size, size);
+    return true;
   }
 
   // The layers over the tiles, from the bottom up: the traffic, the light map that is multiplied with all below it,
@@ -1665,6 +1719,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (m.mode === SWIM) return drawDippers(ctx, m);
     if (m.mode === GIANT) return drawBolster(ctx, m);
     if (m.mode === SHADE) return drawBolsterShadow(ctx, m.of);
+    if (m.rover && drawRover(ctx, x, z, dx, dz)) return;
     const V = VEHICLES[m.type];
     drawBoxes(ctx, x, z, dx, dz, V.boxes, (role) => (role === 'dark' ? DARK : role === 'load' ? m.load : m.paint), { sort: V.sort, outline: !V.bike });
   }

@@ -52,6 +52,20 @@ A new place is a line in `deep/places.json`: a name, the spot in the middle of t
 
 The tiles of a deep place are heavy next to the rest of the site: Churchtown alone, a hundred metres across, is about 20 MB for one view, a quarter of what a whole view of the map takes. They do not have to live with the site. `DEEP_URL=https://... ./site.sh` writes only the list (`deep.json`) and expects `out/deep/` to have been uploaded under that address, to any plain store of files.
 
+## Movers as pictures
+
+The cars and walkers on the map are drawn by the viewer from a few flat boxes. That is right for the map, and too little for a deep place. So a mover can be a picture instead: built in Blender by rule, like a deep place, and rendered with the map's own camera and sun from each of the four views, pointing sixteen ways, with its shadow. The viewer then lays the picture for the way the mover is heading where the boxes would have gone. The pictures come as sheets in three sizes; the small one is fetched with the page and the larger ones only when the zoom asks for them.
+
+The first is a Land Rover: a slate blue Defender 110 with a white roof, after photographs of a real one. One car in the traffic is that Defender. It sets out from the church.
+
+```
+uv run deep/models/defender.py             pictures of the car to look at, in out/models/defender/
+uv run deep/models/defender.py --sprites   the sheets for the viewer, in out/sprites/defender/ (about a quarter of an hour)
+./site.sh                                  puts them into site/sprites/
+```
+
+A picture is lit by itself: the car does not darken under a tree or beside a house, and it does not tip on a hill.
+
 ## Pipeline
 
 Run `./build.sh` for everything. The steps:
