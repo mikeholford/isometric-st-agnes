@@ -104,6 +104,7 @@ def cut_tiles():
     for cx, row in todo:
         full.paste(Image.open(f'{WORK}/chunks-{SCALE}/{cx}_{row}.png'), (cx * CHUNK, row * CHUNK))
         stands.paste(Image.open(f'{WORK}/chunks-{SCALE}/{cx}_{row}_mask.png'), (cx * CHUNK, row * CHUNK))
+    full.resize((PW // 2, PH // 2), Image.LANCZOS).save(WORK + '/picture.jpg', quality=90)  # the whole place in one file, to look at
     soft = float(PLACE.get('soft', 5)) * SCALE  # metres of fading at the edge, in pixels
     fx = np.clip(np.minimum(np.arange(PW), PW - 1 - np.arange(PW)) / soft, 0, 1)
     fy = np.clip(np.minimum(np.arange(PH), PH - 1 - np.arange(PH)) / soft, 0, 1)
@@ -124,7 +125,7 @@ def cut_tiles():
             img = img.resize((math.ceil(img.width / 2), math.ceil(img.height / 2)), Image.LANCZOS)
     json.dump({'id': PLACE['id'], 'name': PLACE['name'], 'look': LOOK, 'scale': SCALE, 'u': [U0, U1], 'v': [V0, V1], 'width': PW, 'height': PH,
                'tileSize': TILE, 'minLevel': least, 'tiles': 'map_files/', 'objects': 'objects_files/'}, open(WORK + '/place.json', 'w'))
-    print('tiles in', WORK)
+    print(f'tiles in {WORK}, and the whole picture to look at in {WORK}/picture.jpg')
 
 
 if MODE == 'tiles':
