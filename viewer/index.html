@@ -1881,6 +1881,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // Paint the water onto the shore's own small picture, one pixel a cell: foam at the edge, then turquoise that
   // deepens, as in the tiles.
   function paintShore(sea) {
+    sea = Math.round(sea * 50) / 50; // painted again for every 2 cm of water, a few times a second at most
     const key = `${sea.toFixed(2)},${VIEW.i}`;
     if (shore.drawn === key) return;
     shore.drawn = key;
