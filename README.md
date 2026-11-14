@@ -34,6 +34,24 @@ The light on the map follows the real sun (`HOURS` in `viewer/index.html`): gold
 
 The lens is what makes it a miniature: one small WebGL pass over a copy of the screen at about a third of its size blurs every point by how far it lies from the plane of focus, using the heights of the land, and adds bloom and a vignette. It is laid over the sharp map, so the full-size picture never goes through a shader and a phone keeps up. `?lens=off` shows the map without it.
 
+## Deep places
+
+Some places on the map can be gone into much closer than the rest: 64 pixels to the metre where the map has 8. Zoom in on one and, past what the map's own tiles hold, a far more detailed picture of the place comes up over the map; there the zoom goes on to where a slate on a roof is a few pixels wide. Zoomed out, nothing of it is loaded.
+
+`deep/scene.py` makes that picture. It rebuilds the place in Blender and renders it with Cycles, a path tracer, from exactly where the map's camera stands, so that the picture lies on the map to the pixel, with the sun where the map has it. What is real is what the map knows: the shape of the land, the outlines and heights of the buildings, the roads, where each tree stands and how big it is. Everything smaller is made up by rule (`deep/details.py`): slates laid in courses, rubble walls, sash windows, doors, chimney pots, grass by the blade, flowers, stone hedges, gravestones round a church, paint on the road, parked cars. What is put somewhere by hand, also made up, is in `deep/scenes/<place>.py`: the phone box by the church, a bench, people talking. Cars, walkers and the giant are left out of the tiles, since the map draws its own, and they pass behind the deep buildings and trees as they do behind the map's.
+
+```
+uv run deep/scene.py churchtown --try     # one small picture, timed: says how long the whole place will take
+uv run deep/scene.py churchtown           # the place as tiles, in out/deep/churchtown-45/
+./site.sh                                 # puts the deep places into site/ with the rest
+```
+
+It needs [uv](https://docs.astral.sh/uv/) and the data of the pipeline below (`data/build/`); uv fetches Blender as a Python module by itself. A graphics card is used when there is one (Metal on a Mac with an Apple chip, `--device cpu` to do without). The render is done in chunks, each a file of its own, so one that was cut short goes on where it stopped. `--look 135` renders another of the map's four views, `--scale 32` half as sharp in a quarter of the time. `--picture out/x.png --across 48 --movers` makes a single picture instead, with the giant in it.
+
+A new place is a line in `deep/places.json`: a name, the spot in the middle of the picture in the map's local metres (x east and z south of the middle of the map), and how wide and high the picture is in metres on the screen. A file of the same name in `deep/scenes/` is run after the rules, for what belongs only there.
+
+The tiles of a deep place are heavy next to the rest of the site: all of Churchtown is about as much as a whole view of the map. They do not have to live with the site. `DEEP_URL=https://... ./site.sh` writes only the list (`deep.json`) and expects `out/deep/` to have been uploaded under that address, to any plain store of files.
+
 ## Pipeline
 
 Run `./build.sh` for everything. The steps:
