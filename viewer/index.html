@@ -2134,7 +2134,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     for (const [ax, az] of ASIDE) {
       ctx.beginPath();
       for (const cast of casts) {
-        const pts = hull(cast.map(([x, y, z, far]) => flat([x + ax * far * 0.03, y, z + az * far * 0.03])));
+        const pts = hull(cast.map(([x, y, z, far]) => flat([x + ax * far * 0.014, y, z + az * far * 0.014])));
         ctx.moveTo(pts[0][0], pts[0][1]);
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
         ctx.closePath();
