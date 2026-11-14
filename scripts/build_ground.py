@@ -449,6 +449,10 @@ def main():
     img[border & hard] *= 0.86
     del hard, border
 
+    # The ground before any light falls on it, at one metre a pixel: for the live 3D viewer (viewer/live.html), which
+    # has a sun of its own.
+    Image.fromarray(np.clip(img[::4, ::4], 0, 255).astype(np.uint8)).save(BUILD / "ground_albedo.jpg", quality=88)
+
     # The shape of the land in light: slopes that face the sun are brighter, slopes that face away are dimmer.
     # Level ground stays as painted. The sea is left alone.
     az, el = math.radians(SUN_AZIMUTH), math.radians(SUN_ELEVATION)

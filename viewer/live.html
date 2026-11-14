@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Isometric St Agnes, live</title>
+<meta name="description" content="A trial of St Agnes drawn live in 3D: the land from lidar, the sun where it stands now, shadows that move, and the sea at the real tide.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root { --sky: #20242c; --panel: #171a21eb; --line: #343a46; --fg: #ece6d6; --muted: #a3a497; --peat: #d2b47a; color-scheme: dark; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--sky); color: var(--fg); font: 14px/1.4 "IBM Plex Sans", system-ui, sans-serif; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  /* The same soft edges as the map has without its lens: blur layers at the top and bottom of the screen. */
+  .tilt { position: fixed; left: 0; right: 0; height: 30vh; pointer-events: none; }
+  .tilt.top { top: 0; }
+  .tilt.bottom { bottom: 0; }
+  .tilt span { position: absolute; inset: 0; }
+  .tilt span:nth-child(1) { backdrop-filter: blur(1.5px); }
+  .tilt span:nth-child(2) { backdrop-filter: blur(4px); }
+  .tilt.top span:nth-child(1) { -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent 100%); mask-image: linear-gradient(to bottom, #000 40%, transparent 100%); }
+  .tilt.top span:nth-child(2) { -webkit-mask-image: linear-gradient(to bottom, #000 10%, transparent 60%); mask-image: linear-gradient(to bottom, #000 10%, transparent 60%); }
+  .tilt.bottom span:nth-child(1) { -webkit-mask-image: linear-gradient(to top, #000 40%, transparent 100%); mask-image: linear-gradient(to top, #000 40%, transparent 100%); }
+  .tilt.bottom span:nth-child(2) { -webkit-mask-image: linear-gradient(to top, #000 10%, transparent 60%); mask-image: linear-gradient(to top, #000 10%, transparent 60%); }
+  #panel {
+    position: fixed; top: calc(16px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px));
+    width: min(340px, calc(100vw - 32px)); padding: 14px 16px; display: grid; gap: 8px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: blur(6px);
+  }
+  h1 { margin: 0; font: 600 24px/1.1 "IBM Plex Serif", Georgia, serif; }
+  p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
+  p a { color: inherit; }
+  #now { font: 400 12px/1.6 "IBM Plex Mono", ui-monospace, monospace; color: var(--fg); font-variant-numeric: tabular-nums; }
+  #now span { color: var(--muted); }
+  label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  input[type="range"] { width: 100%; accent-color: var(--peat); }
+  button { font: 500 12px/1 "IBM Plex Sans", system-ui, sans-serif; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 7px 10px; cursor: pointer; justify-self: start; }
+  button:hover { border-color: var(--peat); color: var(--peat); }
+  #wait { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
+  @media (max-width: 640px) { #panel p.long { display: none; } h1 { font-size: 20px; } }
+</style>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="wait">Building the land…</div>
+<div class="tilt top" aria-hidden="true"><span></span><span></span></div>
+<div class="tilt bottom" aria-hidden="true"><span></span><span></span></div>
+<section id="panel">
+  <h1>St Agnes, live</h1>
+  <p>A trial: the same village, drawn as you look, with nothing painted in advance. The land is the lidar, each building its outline pulled up to its height, and the light is the sun where it stands now.</p>
+  <p class="long">Drag to move and scroll or pinch to zoom. Slide the hour to watch the shadows go round and the tide come in. <a href="./">Back to the map</a></p>
+  <div id="now"></div>
+  <label>The hour <input id="hour" type="range" min="-720" max="720" step="5" value="0" aria-label="Minutes before or after now"></label>
+  <button type="button" id="reset">Back to now</button>
+</section>
+
+<script type="module">
+  // A trial of the map drawn live: a three.js scene under a fixed isometric camera, the same 2:1 view as the tiles
+  // (30 degrees down, looking north-east). The land is a mesh of the lidar heights with the ground painted on it
+  // before any light (ground.jpg), the buildings are their outlines pulled up to a flat top (live.json), the trees
+  // are the map's own. The sun stands where it stands over St Agnes at this minute and casts real shadows; the sea
+  // lies at the height of the tide and moves. World units are metres: x east, y up, z south, as in render/scene.js.
+  import * as THREE from 'three';
+
+  THREE.ColorManagement.enabled = false; // colours are painted in sRGB and used as they are, like the tiles
+  const deg = Math.PI / 180, EL = 30 * deg, LOOK = 45 * deg, COS30 = Math.cos(EL);
+  const small = matchMedia('(max-width: 640px), (pointer: coarse)').matches;
+  const now = document.getElementById('now'), slider = document.getElementById('hour');
+
+  // The sun over St Agnes (50.31° N, 5.20° W) and the tide, both from the time alone: the same sums as in the map
+  // (viewer/index.html, sunAt and tideAt), where they are explained.
+  function sunAt(t) {
+    const d = t / 86400 - 10957.5, g = (357.529 + 0.98560028 * d) * deg;
+    const lon = (280.459 + 0.98564736 * d + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * deg, tilt = (23.439 - 3.6e-7 * d) * deg;
+    const ra = Math.atan2(Math.cos(tilt) * Math.sin(lon), Math.cos(lon)), dec = Math.asin(Math.sin(tilt) * Math.sin(lon));
+    const hour = ((18.697374558 + 24.06570982441908 * d) * 15 - 5.2) * deg - ra, lat = 50.31 * deg;
+    const el = Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(hour));
+    const az = Math.atan2(-Math.sin(hour), Math.tan(dec) * Math.cos(lat) - Math.sin(lat) * Math.cos(hour));
+    return { az: (az / deg + 360) % 360, el: el / deg };
+  }
+  const TIDE = [
+    [28.9841042, 1, 2.2301, 336.12], [30, 0, 0.783, 180.42], [30.0821373, 2, 0.213, 339.95], [28.4397295, 1, 0.42, 212.98],
+    [15.0410686, 3, 0.0522, 107.12], [13.9430356, 4, 0.0576, 185.24], [57.9682084, 5, 0.076, 259.58], [58.9841042, 1, 0.052, 100.12],
+    [27.9682084, 1, 0.0517, 215.75], [28.5125831, 1, 0.0748, 250.77], [29.5284789, 1, 0.0991, 251.7],
+  ];
+  function tideAt(t) {
+    const node = (125.0445 - 0.05295377 * (t / 86400 - 10957.5)) * deg, c = Math.cos(node), sn = Math.sin(node);
+    const m = [1 - 0.037 * c, -2.1 * deg * sn];
+    const slow = [[1, 0], m, [1.024 + 0.286 * c, -17.7 * deg * sn], [1.006 + 0.115 * c, -8.9 * deg * sn], [1.009 + 0.187 * c, 10.8 * deg * sn], [m[0] * m[0], 2 * m[1]]];
+    let h = 0.2;
+    for (const [speed, kind, size, lag] of TIDE) h += size * slow[kind][0] * Math.cos(((speed * t) / 3600 - lag) * deg + slow[kind][1]);
+    return h;
+  }
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false; // the shadows are drawn again only when the sun or the view has moved
+  document.body.prepend(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x20242c);
+
+  const [M, heightFile, live] = await Promise.all([
+    fetch('map.json', { cache: 'no-store' }).then((r) => r.json()),
+    fetch('height.bin').then((r) => r.arrayBuffer()),
+    fetch('live.json', { cache: 'no-store' }).then((r) => r.json()),
+  ]);
+  const A = M.area, hx = (A.xmax - A.xmin) / 2, hz = (A.ymax - A.ymin) / 2, res = A.height.res;
+
+  // The heights (height.bin): the ground every 4 m, row 0 at the north edge.
+  const view = new DataView(heightFile), W = view.getUint16(0, true), R = view.getUint16(2, true), H = new Float32Array(W * R);
+  for (let i = 0; i < H.length; i++) H[i] = view.getUint16(4 + i * 2, true) / 10 - 100;
+  function heightAt(x, z) {
+    const fx = Math.min(W - 1.001, Math.max(0, (x + hx) / res)), fz = Math.min(R - 1.001, Math.max(0, (z + hz) / res));
+    const c = Math.floor(fx), r = Math.floor(fz), a = fx - c, b = fz - r, i = r * W + c;
+    return (H[i] * (1 - a) + H[i + 1] * a) * (1 - b) + (H[i + W] * (1 - a) + H[i + W + 1] * a) * b;
+  }
+
+  // The land: one mesh, a point for every height (every second one on a phone), the unlit ground laid over it.
+  {
+    const step = small ? 2 : 1, cols = Math.floor((W - 1) / step) + 1, rows = Math.floor((R - 1) / step) + 1;
+    const pos = new Float32Array(cols * rows * 3), uv = new Float32Array(cols * rows * 2), index = new Uint32Array((cols - 1) * (rows - 1) * 6);
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const i = r * cols + c, gc = c * step, gr = r * step;
+      pos.set([gc * res - hx, H[gr * W + gc], gr * res - hz], i * 3);
+      uv.set([gc / (W - 1), 1 - gr / (R - 1)], i * 2);
+    }
+    let k = 0;
+    for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) {
+      const a = r * cols + c, b = a + 1, d = a + cols, e = d + 1;
+      index.set([a, d, b, b, d, e], k);
+      k += 6;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(new THREE.BufferAttribute(index, 1));
+    geo.computeVertexNormals();
+    const ground = await new THREE.TextureLoader().loadAsync('ground.jpg');
+    ground.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const land = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: ground }));
+    land.receiveShadow = true;
+    land.castShadow = true; // a cliff shades its cove, the Beacon its northern slope
+    scene.add(land);
+    // The sides of the block the land stands on: plain rock down to 18 m under the datum.
+    const side = [], edge = (c, r) => [c * res - hx, H[r * W + c], r * res - hz];
+    const strip = (cells) => {
+      for (let i = 1; i < cells.length; i++) {
+        const a = edge(...cells[i - 1]), b = edge(...cells[i]);
+        side.push(...a, a[0], -18, a[2], ...b, ...b, a[0], -18, a[2], b[0], -18, b[2]);
+      }
+    };
+    const across = [...Array(W).keys()], down = [...Array(R).keys()];
+    strip(across.map((c) => [c, R - 1]));
+    strip(down.map((r) => [0, r]));
+    strip(across.map((c) => [c, 0]));
+    strip(down.map((r) => [W - 1, r]));
+    const rock = new THREE.BufferGeometry();
+    rock.setAttribute('position', new THREE.Float32BufferAttribute(side, 3));
+    rock.computeVertexNormals();
+    scene.add(new THREE.Mesh(rock, new THREE.MeshLambertMaterial({ color: 0x6b5f55, side: THREE.DoubleSide })));
+  }
+
+  // The buildings: each outline pulled up from its ground to its top, with a flat roof. Walls in the colours of a
+  // Cornish village (lime render, killas, granite), roofs in slate.
+  {
+    const WALLS = [[236, 232, 220], [226, 218, 200], [212, 202, 184], [170, 158, 142], [150, 140, 128], [190, 176, 152]];
+    const ROOFS = [[66, 68, 74], [88, 90, 96], [120, 122, 124], [108, 56, 46]];
+    const pos = [], col = [];
+    const hash = (n) => { const s = Math.sin(n * 12.9898) * 43758.5453; return s - Math.floor(s); };
+    live.buildings.forEach(([ground, top, ...flat], n) => {
+      const ring = [], y0 = ground / 10 - 0.5, y1 = top / 10;
+      for (let i = 0; i < flat.length; i += 2) ring.push(new THREE.Vector2(flat[i] / 10, flat[i + 1] / 10));
+      const wall = WALLS[Math.floor(hash(n) * WALLS.length)].map((v) => v / 255), roof = ROOFS[Math.floor(hash(n + 0.5) * (hash(n * 3) < 0.9 ? 3 : 4))].map((v) => v / 255);
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i], b = ring[(i + 1) % ring.length];
+        pos.push(a.x, y0, a.y, b.x, y0, b.y, b.x, y1, b.y, a.x, y0, a.y, b.x, y1, b.y, a.x, y1, a.y);
+        for (let k = 0; k < 6; k++) col.push(...wall);
+      }
+      for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(ring, [])) {
+        pos.push(ring[i].x, y1, ring[i].y, ring[j].x, y1, ring[j].y, ring[k].x, y1, ring[k].y);
+        for (let q = 0; q < 3; q++) col.push(...roof);
+      }
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    geo.computeVertexNormals();
+    const houses = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    houses.castShadow = houses.receiveShadow = true;
+    scene.add(houses);
+  }
+
+  // The trees and bushes: a crown each, on a trunk where it is a tree.
+  {
+    const LEAVES = [[58, 92, 42], [68, 102, 46], [50, 84, 40], [76, 106, 48], [62, 88, 38], [56, 96, 50]];
+    const t = live.trees, n = t.length / 5;
+    const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshLambertMaterial({ flatShading: true }), n);
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.5, 0.62, 1, 6), new THREE.MeshLambertMaterial({ color: 0x4a3a2e }), n);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+    for (let i = 0; i < n; i++) {
+      const x = t[i * 5] / 10, z = t[i * 5 + 1] / 10, y = t[i * 5 + 2] / 10, h = t[i * 5 + 3] / 10, r = t[i * 5 + 4] / 10, bush = h < 5.5;
+      const half = bush ? h * 0.6 : Math.max(1.2, h * 0.38), wide = bush ? Math.max(r, h * 0.55) : Math.min(r, half * 1.5);
+      q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, i * 2.4);
+      crowns.setMatrixAt(i, m.compose(p.set(x, y + (bush ? h * 0.42 : h - half), z), q, s.set(wide, half, wide)));
+      const leaf = LEAVES[i % LEAVES.length], k = (0.9 + 0.2 * ((i * 0.618) % 1)) / 255;
+      crowns.setColorAt(i, c.setRGB(leaf[0] * k, leaf[1] * k, leaf[2] * k));
+      const tall = bush ? 0.001 : h - half, thick = bush ? 0.001 : Math.min(1.3, 0.45 + h * 0.045);
+      trunks.setMatrixAt(i, m.compose(p.set(x, y + tall / 2 - 0.3, z), q, s.set(thick, tall + 0.6, thick)));
+    }
+    for (const mesh of [crowns, trunks]) {
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+    }
+  }
+
+  // The sea: a sheet at the height of the tide. It knows the sea bed under it (how deep it is here) and how far it
+  // is to the land, both from the heights, and paints itself from those: see-through turquoise in the shallows,
+  // blue further out, foam along the edge, lines of surf that run in, and a long swell that crosses the bay.
+  const sea = (() => {
+    // For every cell of the heights: the bed, as 0 to 255 for 6 m under to 6 m over the datum, and the way to the
+    // land in cells (4 m each), found by letting the shore spread out over the water.
+    const data = new Uint8Array(W * R * 4), far = new Uint8Array(W * R).fill(255);
+    let ring = [];
+    for (let i = 0; i < H.length; i++) if (H[i] > A.terrain.sea + 0.06) far[i] = 0, ring.push(i);
+    for (let d = 1; d < 255 && ring.length; d++) {
+      const next = [];
+      for (const i of ring) {
+        const c = i % W;
+        for (const j of [i - W, i + W, c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1]) if (j >= 0 && j < H.length && far[j] === 255) far[j] = d, next.push(j);
+      }
+      ring = next;
+    }
+    for (let i = 0; i < H.length; i++) data.set([Math.round(Math.min(1, Math.max(0, (H[i] + 6) / 12)) * 255), far[i], 0, 255], i * 4);
+    const bed = new THREE.DataTexture(data, W, R, THREE.RGBAFormat);
+    bed.magFilter = bed.minFilter = THREE.LinearFilter;
+    bed.needsUpdate = true;
+    const material = new THREE.ShaderMaterial({
+      transparent: true,
+      uniforms: { bed: { value: bed }, level: { value: 0 }, time: { value: 0 }, light: { value: new THREE.Color(1, 1, 1) }, sun: { value: new THREE.Vector3(0, 1, 0) }, shine: { value: 1 } },
+      vertexShader: `varying vec2 at; varying vec3 world;
+        void main() { at = vec2(uv.x, 1.0 - uv.y); /* row 0 of the heights is the north edge */ world = (modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0); }`,
+      fragmentShader: `uniform sampler2D bed; uniform float level, time, shine; uniform vec3 light, sun;
+        varying vec2 at; varying vec3 world;
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+        float noise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }
+        void main() {
+          vec4 b = texture2D(bed, at);
+          float deep = level - (b.r * 12.0 - 6.0), out_ = b.g * 255.0 * 4.0; // metres of water here, metres to the land
+          float lap = 0.1 * sin(time * 0.9 + noise(world.xz * 0.05) * 6.3); // the edge runs up the sand and back
+          if (deep + lap < 0.0) discard;
+          vec3 c = mix(vec3(0.59, 0.84, 0.8), vec3(0.25, 0.66, 0.72), smoothstep(0.0, 2.2, deep));
+          c = mix(c, vec3(0.15, 0.47, 0.64), smoothstep(30.0, 260.0, out_));
+          c = mix(c, vec3(0.11, 0.35, 0.55), smoothstep(260.0, 900.0, out_));
+          // The swell: long low waves from the north-west. Where a face turns to the sun it glints.
+          float swell = sin(dot(world.xz, vec2(0.05, 0.035)) + time * 0.55) + 0.6 * sin(dot(world.xz, vec2(-0.02, 0.09)) + time * 0.8) + 0.4 * noise(world.xz * 0.12 + time * 0.15);
+          c *= 0.96 + 0.05 * swell;
+          vec3 n = normalize(vec3(0.05 * cos(dot(world.xz, vec2(0.05, 0.035)) + time * 0.55) + 0.1 * (noise(world.xz * 0.6 + time * 0.3) - 0.5), 1.0, 0.035 * cos(dot(world.xz, vec2(0.05, 0.035)) + time * 0.55) + 0.1 * (noise(world.zx * 0.6 - time * 0.25) - 0.5)));
+          vec3 eye = normalize(vec3(-0.6124, 0.5, 0.6124)); // toward the camera
+          c += shine * vec3(1.0, 0.95, 0.85) * pow(max(0.0, dot(n, normalize(sun + eye))), 180.0);
+          // Surf: lines that run in toward the land, breaking up as they go, and foam where the water ends.
+          float run = sin(out_ * 0.22 + time * 1.3 + noise(world.xz * 0.03) * 5.0);
+          float surf = smoothstep(0.86, 0.97, run) * (1.0 - smoothstep(18.0, 70.0, out_)) * step(0.35, noise(world.xz * 0.2 + time * 0.1));
+          float foam = max(surf, 1.0 - smoothstep(0.0, 0.3, deep + lap));
+          c = mix(c, vec3(0.96, 0.98, 0.97), foam);
+          gl_FragColor = vec4(c * light, mix(0.5, 0.94, smoothstep(0.0, 2.0, deep)) + foam * 0.4);
+        }`,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2 * hx, 2 * hz), material);
+    mesh.rotation.x = -Math.PI / 2;
+    scene.add(mesh);
+    return mesh;
+  })();
+
+  // The light: the sun, where it is, and the sky all round. With the sun down the sky is all there is, and blue.
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1);
+  const sky = new THREE.HemisphereLight(0xc8d8f0, 0x6a6450, 1);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(small ? 2048 : 4096, small ? 2048 : 4096);
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.35;
+  scene.add(sun, sun.target, sky);
+
+  // The camera: fixed, 30 degrees down, looking north-east, with no perspective. `at` is the spot on the ground in
+  // the middle of the screen and `span` the metres of land across the width of it.
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 10, 9000);
+  const forward = new THREE.Vector3(Math.cos(EL) * Math.sin(LOOK), -Math.sin(EL), -Math.cos(EL) * Math.cos(LOOK));
+  const right = new THREE.Vector3(Math.cos(LOOK), 0, Math.sin(LOOK)), away = new THREE.Vector3(Math.sin(LOOK), 0, -Math.cos(LOOK));
+  const at = new THREE.Vector3(529, 0, 15); // the parish church
+  let span = small ? 420 : 700, dirty = true, offset = 0;
+  function frame() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h, false);
+    at.x = Math.max(-hx, Math.min(hx, at.x)), at.z = Math.max(-hz, Math.min(hz, at.z)), at.y = heightAt(at.x, at.z);
+    camera.left = -span / 2, camera.right = span / 2, camera.top = (span * h) / w / 2, camera.bottom = -camera.top;
+    camera.position.copy(at).addScaledVector(forward, -4000);
+    camera.lookAt(at);
+    camera.updateProjectionMatrix();
+    dirty = true;
+  }
+  addEventListener('resize', frame);
+
+  // Moving about: drag to move the land under the camera, scroll or pinch to come closer.
+  const canvas = renderer.domElement, fingers = new Map();
+  const move = (dx, dy) => {
+    const m = span / innerWidth;
+    at.addScaledVector(right, -dx * m).addScaledVector(away, (dy * m) / Math.sin(EL));
+    frame();
+  };
+  const zoom = (k) => { span = Math.max(90, Math.min(6500, span * k)); frame(); };
+  canvas.addEventListener('pointerdown', (e) => { fingers.set(e.pointerId, [e.clientX, e.clientY]); canvas.setPointerCapture(e.pointerId); canvas.classList.add('dragging'); });
+  canvas.addEventListener('pointermove', (e) => {
+    const was = fingers.get(e.pointerId);
+    if (!was) return;
+    if (fingers.size === 2) {
+      const [other] = [...fingers].filter(([id]) => id !== e.pointerId).map(([, p]) => p);
+      zoom(Math.hypot(was[0] - other[0], was[1] - other[1]) / Math.max(1, Math.hypot(e.clientX - other[0], e.clientY - other[1])));
+    } else move(e.clientX - was[0], e.clientY - was[1]);
+    fingers.set(e.pointerId, [e.clientX, e.clientY]);
+  });
+  for (const type of ['pointerup', 'pointercancel']) canvas.addEventListener(type, (e) => { fingers.delete(e.pointerId); canvas.classList.toggle('dragging', fingers.size > 0); });
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoom(Math.exp(e.deltaY * 0.0012)); }, { passive: false });
+
+  slider.addEventListener('input', () => { offset = slider.value * 60; dirty = true; });
+  document.getElementById('reset').addEventListener('click', () => { slider.value = 0; offset = 0; dirty = true; });
+
+  // Every frame: the sea moves; the light and the shadows are set again when the minute or the view has changed.
+  const clock = (t) => new Date(t * 1000).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  let minute = -1;
+  function draw(ms) {
+    const t = Date.now() / 1000 + offset;
+    if (Math.floor(t / 60) !== minute) minute = Math.floor(t / 60), dirty = true;
+    const level = tideAt(t);
+    sea.position.y = level;
+    sea.material.uniforms.level.value = level;
+    sea.material.uniforms.time.value = ms / 1000;
+    if (dirty) {
+      dirty = false;
+      const s = sunAt(t), az = s.az * deg, el = Math.max(s.el, 2) * deg;
+      const to = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+      // How much sun: none below the horizon, full from ten degrees up; warm when it is low.
+      const day = Math.min(1, Math.max(0, (s.el + 1) / 10)), low = 1 - Math.min(1, Math.max(0, s.el / 18)), dusk = Math.min(1, Math.max(0, (s.el + 12) / 12));
+      sun.intensity = 0.95 * Math.PI * day;
+      sun.color.setRGB(1, 0.96 - 0.22 * low, 0.88 - 0.42 * low);
+      sky.intensity = Math.PI * (0.16 + 0.46 * dusk);
+      sky.color.setRGB(0.5 + 0.28 * dusk, 0.6 + 0.25 * dusk, 0.94);
+      sun.target.position.copy(at);
+      sun.position.copy(at).addScaledVector(to, 2500);
+      // The shadow map covers the land in view and a little round it.
+      const reach = Math.max(span, (span * innerHeight) / innerWidth / Math.sin(EL)) * 0.62;
+      const cam = sun.shadow.camera;
+      cam.left = cam.bottom = -reach, cam.right = cam.top = reach, cam.near = 500, cam.far = 4500;
+      cam.updateProjectionMatrix();
+      renderer.shadowMap.needsUpdate = true;
+      const all = 0.1 + 0.2 * dusk + 0.65 * day;
+      sea.material.uniforms.light.value.setRGB(all * (0.75 + 0.25 * dusk), all * (0.82 + 0.18 * dusk), all);
+      sea.material.uniforms.sun.value.copy(to);
+      sea.material.uniforms.shine.value = day;
+      const going = tideAt(t + 300) > level ? 'rising' : 'falling';
+      now.innerHTML = `${clock(t)} <span>·</span> sun ${s.el >= 0 ? `${s.el.toFixed(0)}° up` : 'down'}<br>tide ${level >= 0 ? '+' : '−'}${Math.abs(level).toFixed(1)} m, ${going}`;
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(draw);
+  }
+  frame();
+  document.getElementById('wait').remove();
+  requestAnimationFrame(draw);
+  window.live = { at, frame, zoom, set span(v) { span = v; frame(); } }; // for trying things in the console
+</script>
+</body>
+</html>
