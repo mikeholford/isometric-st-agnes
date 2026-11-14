@@ -2721,7 +2721,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // a little aside, further aside the longer the beam.
   function castShadow(p) {
     const level = Math.hypot(SUN[0], SUN[2]) || 1e-6, sx = -SUN[0] / level, sz = -SUN[2] / level, fall = SUN[1] / level;
-    const above = (s) => p[1] - fall * s - heightAt(p[0] + sx * s, p[2] + sz * s);
+    const top = (x, z) => Math.max(SEA, heightAt(x, z)); // where the sea is in, the shadow falls on the water
+    const above = (s) => p[1] - fall * s - top(p[0] + sx * s, p[2] + sz * s);
     let near = 0, far = 0;
     for (let i = 0; i < 200 && above(far) > 0; i++) near = far, far += Math.max(0.3, above(far) / (fall + 0.8));
     for (let i = 0; i < 6; i++) {
@@ -2729,7 +2730,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
       if (above(mid) > 0) near = mid; else far = mid;
     }
     const x = p[0] + sx * far, z = p[2] + sz * far;
-    return [x, heightAt(x, z), z, far];
+    return [x, top(x, z), z, far];
   }
   const ASIDE = [[0, 0], [1, 0], [0.31, 0.95], [-0.81, 0.59], [-0.81, -0.59], [0.31, -0.95]];
   function drawBolsterShadow(ctx, g) {
