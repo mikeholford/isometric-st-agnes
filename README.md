@@ -46,11 +46,11 @@ uv run deep/scene.py churchtown           # the place as tiles, in out/deep/chur
 ./site.sh                                 # puts the deep places into site/ with the rest
 ```
 
-It needs [uv](https://docs.astral.sh/uv/) and the data of the pipeline below (`data/build/`); uv fetches Blender as a Python module by itself. A graphics card is used when there is one (Metal on a Mac with an Apple chip, `--device cpu` to do without). The render is done in chunks, each a file of its own, so one that was cut short goes on where it stopped. `--look 135` renders another of the map's four views, `--scale 32` half as sharp in a quarter of the time. `--picture out/x.png --across 48 --movers` makes a single picture instead, with the giant in it.
+It needs [uv](https://docs.astral.sh/uv/) and the data of the pipeline below (`data/build/`, with `cd scripts && uv run build_ground.py` run once since this was added: it now also saves the unlit ground that the deep scene reads); uv fetches Blender as a Python module by itself. On four processor cores without a graphics card Churchtown took an hour. A graphics card is used when there is one (Metal on a Mac with an Apple chip, `--device cpu` to do without). The render is done in chunks, each a file of its own, so one that was cut short goes on where it stopped. `--look 135` renders another of the map's four views, `--scale 32` half as sharp in a quarter of the time. `--picture out/x.png --across 48 --movers` makes a single picture instead, with the giant in it.
 
 A new place is a line in `deep/places.json`: a name, the spot in the middle of the picture in the map's local metres (x east and z south of the middle of the map), and how wide and high the picture is in metres on the screen. A file of the same name in `deep/scenes/` is run after the rules, for what belongs only there.
 
-The tiles of a deep place are heavy next to the rest of the site: all of Churchtown is about as much as a whole view of the map. They do not have to live with the site. `DEEP_URL=https://... ./site.sh` writes only the list (`deep.json`) and expects `out/deep/` to have been uploaded under that address, to any plain store of files.
+The tiles of a deep place are heavy next to the rest of the site: Churchtown alone, a hundred metres across, is about 20 MB for one view, a quarter of what a whole view of the map takes. They do not have to live with the site. `DEEP_URL=https://... ./site.sh` writes only the list (`deep.json`) and expects `out/deep/` to have been uploaded under that address, to any plain store of files.
 
 ## Pipeline
 
