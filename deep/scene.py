@@ -1268,9 +1268,21 @@ def aim(px, py, w, h):
     scene.render.resolution_x, scene.render.resolution_y = w, h
 
 
+# A graphics card can give up in the middle of a render; on a Mac it does so the first time it is used, while its
+# programs are still being made ready, and when the scene changes under it. Nothing rendered is lost, since every
+# chunk is a file, so the run then starts afresh: once more the same way, then without the card's ray tracing
+# hardware and tuned programs, then on the processor. ATTEMPT counts those fresh starts.
+ATTEMPT = int(os.environ.get('DEEP_ATTEMPT', '0'))
+# The masks of what stands up are quick to render and go on the processor, in a run of their own after the picture:
+# changing the whole scene under a graphics card that has just rendered it is what made it give up.
+ONLY_MASKS = MODE == 'tiles' and all(os.path.exists(f'{WORK}/chunks-{SCALE}/{cx}_{row}.png') for cx, row in todo)
+
+
 def device(want):
     """Render on a graphics card when there is one: many times faster than on the processor alone."""
-    if want != 'cpu':
+    if ONLY_MASKS:
+        return 'CPU', f'the processor, {os.cpu_count()} threads: the picture is rendered, only the masks are left, and they are quick'
+    if want != 'cpu' and ATTEMPT < 3:
         try:
             prefs = bpy.context.preferences.addons['cycles'].preferences
             for kind in ('METAL', 'OPTIX', 'CUDA', 'HIP', 'ONEAPI'):
@@ -1283,13 +1295,27 @@ def device(want):
                 if cards:
                     for d in prefs.devices:
                         d.use = d.type == kind
-                    return 'GPU', f"{kind.lower()}: {', '.join(d.name for d in cards)}"
+                    plain = ''
+                    if kind == 'METAL' and ATTEMPT == 2:
+                        prefs.metalrt, prefs.kernel_optimization_level, plain = 'OFF', 'OFF', ', without its ray tracing hardware and tuned programs'
+                    return 'GPU', f"{kind.lower()}: {', '.join(d.name for d in cards)}{plain}"
             prefs.compute_device_type = 'NONE'
         except Exception as e:  # noqa: BLE001
             print('no graphics card to render on:', e)
-        if want == 'gpu':
-            sys.exit('--device gpu was asked for, and there is no graphics card Cycles can use')
+    if want == 'gpu':
+        sys.exit('--device gpu was asked for, and there is no graphics card that will render this')
     return 'CPU', f'the processor, {os.cpu_count()} threads'
+
+
+def afresh(why=None):
+    """Start this same run again from the top, in place of this one. What is rendered already is kept."""
+    env = dict(os.environ)
+    if why is not None:
+        how = ('the same way', 'without its ray tracing hardware and tuned programs', 'on the processor')[min(2, ATTEMPT)]
+        print(f"the graphics card gave up ({str(why).strip().splitlines()[0][:100]}). Nothing is lost: starting again, {how}.", flush=True)
+        env['DEEP_ATTEMPT'] = str(ATTEMPT + 1)
+    sys.stdout.flush()
+    os.execve(sys.executable, [sys.executable] + sys.argv, env)
 
 
 scene.render.engine = 'CYCLES'
@@ -1317,7 +1343,12 @@ scene.render.image_settings.color_mode = 'RGB'
 def shot(path):
     scene.render.filepath = path
     t0 = time.time()
-    bpy.ops.render.render(write_still=True)
+    try:
+        bpy.ops.render.render(write_still=True)
+    except RuntimeError as e:
+        if cy.device != 'GPU':
+            raise
+        afresh(e)
     return time.time() - t0
 
 
@@ -1363,6 +1394,10 @@ for i, (cx, cy_) in enumerate(todo):
     done += pixels
     left = sum(min(CHUNK, PW - x * CHUNK) * min(CHUNK, PH - y * CHUNK) for x, y in todo[i + 1:] if not os.path.exists(f'{WORK}/chunks-{SCALE}/{x}_{y}.png'))
     print(f'chunk {cx},{cy_}: {took:.0f} s; about {left / max(1, done) * (time.time() - t0) / 60:.0f} minutes to go', flush=True)
+
+if cy.device == 'GPU':
+    print('the picture is rendered; now the masks of what stands up, on the processor', flush=True)
+    afresh()  # this run again: it finds the picture done and goes on the processor (ONLY_MASKS)
 
 scene.render.film_transparent = True
 scene.render.image_settings.color_mode = 'RGBA'
