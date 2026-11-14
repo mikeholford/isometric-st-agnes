@@ -56,6 +56,11 @@ json.dump(m, open(f"{site}/map.json", "w"))
 PY
 cp viewer/index.html data/build/places.json data/build/hotspots.json data/build/routes.json data/build/traffic.json data/build/roads.json data/build/height.bin "$SITE/"
 [ -f viewer/og.png ] && cp viewer/og.png "$SITE/"
+# The live 3D trial (viewer/live.html) with its buildings and trees and the unlit ground.
+if [ -f data/build/live.json ] && [ -f data/build/ground_albedo.jpg ]; then
+  cp viewer/live.html data/build/live.json "$SITE/"
+  cp data/build/ground_albedo.jpg "$SITE/ground.jpg"
+fi
 [ -d data/build/photos ] && cp -r data/build/photos "$SITE/photos"
 [ -d viewer/music ] && cp -r viewer/music "$SITE/music"
 touch "$SITE/.nojekyll"

@@ -34,6 +34,12 @@ The light on the map follows the real sun (`HOURS` in `viewer/index.html`): gold
 
 The lens is what makes it a miniature: one small WebGL pass over a copy of the screen at about a third of its size blurs every point by how far it lies from the plane of focus, using the heights of the land, and adds bloom and a vignette. It is laid over the sharp map, so the full-size picture never goes through a shader and a phone keeps up. `?lens=off` shows the map without it.
 
+## Live in 3D, a trial
+
+`viewer/live.html` (at `live.html` on the site) draws the same village live instead of from tiles: a three.js scene under a fixed isometric camera, the same 2:1 view as the map. The land is a mesh of the lidar heights with the ground laid over it as it is painted before any light (`ground.jpg`, one metre a pixel). Each building is its outline pulled up to a flat top, as high as the lidar's surface stands over the ground under it (`scripts/build_live.py` writes `live.json`). The trees are the map's. The sun stands where it stands over St Agnes at this minute and casts real shadows from land, buildings and trees; the sea lies at the height of the tide and moves, with surf that runs in. A slider turns the hour, to watch the shadows go round and the tide come in.
+
+It is a trial of what the map could become, and it lacks most of what the map has: no roofs but flat ones, no windows, no ink lines, no painterly ground, no traffic, no giant, no place cards, one view. It needs a graphics card of some strength: the land alone is 1.75 million triangles (a quarter of that on a phone).
+
 ## Pipeline
 
 Run `./build.sh` for everything. The steps:
