@@ -72,5 +72,7 @@ cp viewer/index.html data/build/places.json data/build/hotspots.json data/build/
 [ -d viewer/music ] && cp -r viewer/music "$SITE/music"
 # Places rendered deep (deep/scene.py): their tiles, and the list of them, which is empty when there are none.
 python3 deep/publish.py "$SITE"
+# The movers that were rendered as pictures (deep/models/): the viewer draws them in place of its flat shapes.
+[ -d out/sprites ] && cp -r out/sprites "$SITE/sprites"
 touch "$SITE/.nojekyll"
 echo "$SITE/ is ready: $(find "$SITE" -type f | wc -l) files, $(du -sh "$SITE" | cut -f1)"
