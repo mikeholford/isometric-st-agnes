@@ -2008,16 +2008,55 @@ Work step by step, check the licences of the data you use, and ask me about the 
     for (let j = 2; j < count; j++) feet[j] = feet[j - 1] + STEP * (hills ? pace(slopeAt(leg, feet[j - 1])) : 1);
     return (leg.feet = feet);
   }
+  // Now and then he stops to look about him: two to four times a leg, for eight to eighteen seconds, his eyes on
+  // the landmark that lies nearest. When, and for how long, comes from dice seeded with the leg, apart from those
+  // that pick his route, so the route is what it was. A stop takes the place of a step: he draws his hind foot up
+  // beside the other, stands, and steps off again. Like the pace, this starts with a leg that is set here, so
+  // older links keep their spot: set it to the leg in which this goes live.
+  const PAUSES_FROM = 1495512; // 14 November 2026, 00:00 UTC
+  const HALT = 0.85 * STEP_TIME; // drawing up, and stepping off again
+  const LOOKS = [['the Beacon', 171010, 50216], ['the church', 172029.5, 50735.4], ['Wheal Coates', 169878.5, 50011], ['Chapel Porth', 169736.5, 49484.8],
+    ['Trevaunance Cove', 172165, 51612.7], ['Wheal Kitty', 172495, 51063.9], ['Blue Hills', 172846.3, 51671.4], ['St Agnes Head', 169635.6, 51493.9], ['the Bolster Bank', 171473.9, 49710.3]];
+  function pauses(leg) {
+    if (leg.pauses) return leg.pauses;
+    const out = [];
+    if (leg.n >= PAUSES_FROM) {
+      const rnd = dice(leg.n ^ 0x51ed270b), count = 2 + Math.floor(rnd() * 3), steps = Math.floor(LEG / STEP_TIME) - 60;
+      let late = 0; // seconds the stops before this one have cost him
+      for (let i = 0; i < count; i++) {
+        const k = 20 + Math.floor(((i + 0.15 + 0.7 * rnd()) / count) * steps), len = 8 + 10 * rnd();
+        out.push({ k, len, from: k * STEP_TIME + late });
+        late += len + 2 * HALT - STEP_TIME;
+      }
+    }
+    return (leg.pauses = out);
+  }
+  // When step k begins, in seconds into the leg.
+  const stepStart = (leg, k) => pauses(leg).reduce((t, p) => t + (p.k < k ? p.len + 2 * HALT - STEP_TIME : 0), k * STEP_TIME);
   // Where he is at a time (seconds since 1970), or null before the roads are loaded. In step k his weight is on
   // footfall k, and he moves from halfway between the last two footfalls to halfway between the next two: a little
-  // faster as a foot lands and slower as he rises over it, as a body does that vaults over a stiff leg.
+  // faster as a foot lands and slower as he rises over it, as a body does that vaults over a stiff leg. In a stop
+  // he comes to rest over the foot that bears him, and `rest` tells how far the stop has got.
   function bolsterAt(t) {
     if (!lanes.length) return null;
     const n = Math.floor(t / LEG), since = t - n * LEG, leg = bolsterLeg(n), feet = footfalls(leg);
-    const k = Math.min(feet.length - 3, Math.floor(since / STEP_TIME)), ph = since / STEP_TIME - k;
-    const from = (feet[k] + feet[k + 1]) / 2, to = (feet[k + 1] + feet[k + 2]) / 2;
-    const d = from + (to - from) * (ph + (0.15 * Math.sin(2 * Math.PI * ph)) / (2 * Math.PI));
-    return { n, since, leg, feet, k, ph, d, ...routeAt(leg, d) };
+    const stop = pauses(leg).find((p) => since >= p.from && since < p.from + p.len + 2 * HALT);
+    const late = pauses(leg).reduce((sum, p) => sum + (p.from + p.len + 2 * HALT <= since ? p.len + 2 * HALT - STEP_TIME : 0), 0);
+    const k = stop ? stop.k : Math.min(feet.length - 3, Math.floor((since - late) / STEP_TIME)), ph = stop ? 0 : (since - late) / STEP_TIME - k;
+    const from = (feet[k] + feet[k + 1]) / 2, to = (feet[k + 1] + feet[k + 2]) / 2, over = feet[k + 1];
+    let d = from + (to - from) * (ph + (0.15 * Math.sin(2 * Math.PI * ph)) / (2 * Math.PI)), rest = null;
+    if (stop) {
+      const into = since - stop.from, u = into < HALT ? into / HALT : into < HALT + stop.len ? 1 : 1 - (into - HALT - stop.len) / HALT;
+      // u runs from 0 to 1 as he draws up and back to 0 as he steps off; `still` is how much of him has come to rest.
+      rest = { stop, u, off: into >= HALT + stop.len, still: u * u * (3 - 2 * u) };
+      d = rest.off ? over + (to - over) * (1 - u) ** 2 : from + (over - from) * (1 - (1 - u) ** 2);
+    }
+    const g = { n, since, leg, feet, k, ph, d, rest, ...routeAt(leg, d) };
+    if (rest) {
+      // What he looks at: the nearest landmark that is not under his feet.
+      rest.look = LOOKS.map(([name, X, Y]) => ({ name, ...gridToLocal(X, Y) })).map((q) => ({ ...q, far: Math.hypot(q.x - g.x, q.z - g.z) })).filter((q) => q.far > 80).sort((p, q) => p.far - q.far)[0];
+    }
+    return g;
   }
   const bolsterEl = document.getElementById('bolster');
   const unix = () => Date.now() / 1000;
@@ -2030,7 +2069,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const within = (list) => list && list.some(([a, b]) => g.s >= a - 2 && g.s <= b + 2);
     // He steps out of thin air when a leg starts and fades as it ends.
     const alpha = Math.min(1, g.since / 2, (LEG - g.since) / 2);
-    return (bolsterShown = { ...g, mode: GIANT, alpha, behind: within(g.lane.h[laneView]) || within(g.lane.t[laneView]) });
+    return (bolsterShown = { ...g, mode: GIANT, alpha, behind: !solids && (within(g.lane.h[laneView]) || within(g.lane.t[laneView])) });
   }
   // Is this map pixel on him? A little room around him, more when the map is zoomed far out.
   function overBolster(p) {
@@ -2133,7 +2172,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
       ? 'He has walked on since then. He is always somewhere on the map, on a road, a path or the sand, and everyone sees him in the same place. Can you find him? His story is at the Beacon, Chapel Porth and the Bolster Bank.'
       : early
         ? `He had been walking for only ${took}. Hardly anyone finds him that fast${s.early > 1 ? `, and you have now done it ${times(s.early)}` : ''}. He saw you and he is gone. ${again}${run}`
-        : `He saw you and he is gone. ${again}${run} Send the link to a friend: it shows where he stood at this minute.`;
+        : `${g.rest?.look ? `He had stopped to look at ${g.rest.look.name}. ` : ''}He saw you and he is gone. ${again}${run} Send the link to a friend: it shows where he stood at this minute.`;
     document.getElementById('bolster-quote').textContent = `"${quote}"`;
     document.getElementById('bolster-source').textContent = source;
     // What goes with the link: a sentence a friend can read before they open it.
@@ -2208,7 +2247,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (g.n === goneLeg) return `You found him. He sets out again at ${clockTime((g.n + 1) * LEG)}.`;
     const stage = Math.floor(g.since / (LEG / 4)), church = gridToLocal(172029.5, 50735.4);
     const landmark = nearestOf(hotspots, g), place = nearestOf(places, g);
-    if (stage >= 3) return `Bolster is near… he is ${placeName(g.x, g.z)}, walking ${toward(g.dx, g.dz)}.`;
+    if (stage >= 3) return `Bolster is near… he is ${placeName(g.x, g.z)}, ${g.rest?.look ? `standing and looking at ${g.rest.look.name}` : `walking ${toward(g.dx, g.dz)}`}.`;
     if (stage === 2 && place) return `Bolster is near… the ground shook just now by ${place}.`;
     if (stage >= 1 && landmark) return `Bolster is near… heavy steps were heard toward ${landmark}.`;
     const far = Math.hypot(g.x - church.x, g.z - church.z);
@@ -2264,7 +2303,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
       const x = at.x - fz * side * 0.44, z = at.z + fx * side * 0.44, y = heightAt(x, z);
       const tilt = Math.atan2(heightAt(x + fx * 0.4, z + fz * 0.4) - heightAt(x - fx * 0.6, z - fz * 0.6), 1);
       const ground = HARD.has(at.lane.c) ? 'hard' : y < 4.2 ? 'sand' : 'soft';
-      leg.prints.set(j, { p: [x, y - (ground === 'sand' ? 0.07 : 0), z], f: [fx, fz], tilt, side, ground, at: leg.n * LEG + Math.max(0, j - 1) * STEP_TIME });
+      leg.prints.set(j, { p: [x, y - (ground === 'sand' ? 0.07 : 0), z], f: [fx, fz], tilt, side, ground, at: leg.n * LEG + stepStart(leg, Math.max(0, j - 1)) });
     }
     return leg.prints.get(j);
   }
@@ -2278,7 +2317,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   function sandTrail(n) {
     if (!trails.has(n)) {
       const leg = bolsterLeg(n), feet = footfalls(leg), out = [];
-      for (let j = 1; j < feet.length - 2 && (j - 1) * STEP_TIME < LEG; j++) {
+      for (let j = 1; j < feet.length - 2 && stepStart(leg, j - 1) < LEG; j++) {
         const f = footfall(leg, j);
         if (f.ground === 'sand') out.push(f);
       }
@@ -2352,31 +2391,108 @@ Work step by step, check the licences of the data you use, and ask me about the 
     }
   }
 
+  // Birds on his way. Small parties of gulls and rooks sit by the route, every hundred to three hundred metres:
+  // where, how many and which follows from dice seeded with the leg. When he comes within 26 m of a party it goes
+  // up, each bird a moment after the last, away from him and out over the land; from the size of a gull you can
+  // tell the size of him. A party is there from two minutes before he comes.
+  function birdParties(leg) {
+    if (leg.birds) return leg.birds;
+    const rnd = dice(leg.n ^ 0x2545f491), feet = footfalls(leg), out = [];
+    for (let d = 60 + 120 * rnd(); d < feet[feet.length - 3]; d += 100 + 200 * rnd()) {
+      const at = routeAt(leg, d), [fx, fz] = headingAt(leg, d), side = rnd() < 0.5 ? -1 : 1, off = 3.5 + 3 * rnd(), gulls = rnd() < 0.6;
+      const x = at.x - fz * side * off, z = at.z + fx * side * off;
+      // The moment he gets near: the step in which his body passes the spot 26 m short of them.
+      let k = 0;
+      while (k < feet.length - 3 && (feet[k + 1] + feet[k + 2]) / 2 < d - 26) k++;
+      const birds = Array.from({ length: 3 + Math.floor(rnd() * 4) }, () => ({ x: x + (rnd() - 0.5) * 5, z: z + (rnd() - 0.5) * 5, wait: rnd() * 0.9, turn: (rnd() - 0.5) * 1.6, phase: rnd() * 7 }));
+      out.push({ x, z, gulls, away: [-fz * side * 0.8 + fx * 0.6, fx * side * 0.8 + fz * 0.6], up: leg.n * LEG + stepStart(leg, k), birds });
+    }
+    return (leg.birds = out);
+  }
+  function drawBirdParties(ctx, g, inView) {
+    const now = unix(), k = M.scale;
+    for (const party of birdParties(g.leg)) {
+      const since = now - party.up;
+      if (since < -120 || since > 9 || heightAt(party.x, party.z) < SEA + 0.3 || !inView(party.x, party.z, 0)) continue;
+      const body = party.gulls ? '236,236,230' : '46,44,48', here = Math.min(1, (since + 120) / 3); // they come down one by one
+      for (const [i, b] of party.birds.entries()) {
+        const fly = since - b.wait;
+        if (fly <= 0) {
+          // On the ground: a body and its shadow, with a peck now and then.
+          if (here < (i + 1) / party.birds.length) continue;
+          const [px, py] = toPx(b.x, b.z, 0), peck = Math.sin(now * 2.3 + b.phase) > 0.75 ? 0.06 : 0;
+          ctx.fillStyle = `rgba(16,20,30,${(0.1 + 0.16 * LIGHT.sun).toFixed(2)})`;
+          ctx.beginPath();
+          ctx.ellipse(px + SHADOW[0] * 0.2 * k * VIEW.c, py + 0.05 * k, 0.24 * k, 0.1 * k, 0, 0, 7);
+          ctx.fill();
+          ctx.fillStyle = `rgb(${body})`;
+          ctx.beginPath();
+          ctx.ellipse(px, py - (0.16 - peck) * k, 0.2 * k, 0.13 * k, 0, 0, 7);
+          ctx.fill();
+          continue;
+        }
+        // In the air: away from him, climbing, wings beating fast at first; thinner as it goes.
+        const a = Math.atan2(party.away[1], party.away[0]) + b.turn, far = 7.5 * fly + 0.5 * fly * fly, h = 1.2 + 3.2 * fly;
+        const dx = Math.cos(a), dz = Math.sin(a), x = b.x + dx * far, z = b.z + dz * far, alpha = Math.min(1, (9 - since) / 3);
+        if (alpha <= 0) continue;
+        const span = party.gulls ? 0.7 : 0.5, beat = Math.sin(fly * 26 + b.phase) * span, nx = -dz, nz = dx;
+        const sx = x + SHADOW[0] * h, sz = z + SHADOW[1] * h;
+        ctx.globalAlpha = alpha;
+        if (LIGHT.sun > 0.05) poly(ctx, [toPx(sx - nx * span, sz - nz * span, 0), toPx(sx + dx * 0.3, sz + dz * 0.3, 0), toPx(sx + nx * span, sz + nz * span, 0)], `rgba(16,20,30,${(0.2 * LIGHT.sun).toFixed(2)})`);
+        const y = heightAt(x, z) + h;
+        ctx.beginPath();
+        ctx.moveTo(...flat([x - nx * span, y + beat, z - nz * span]));
+        ctx.lineTo(...flat([x, y, z]));
+        ctx.lineTo(...flat([x + nx * span, y + beat, z + nz * span]));
+        ctx.moveTo(...flat([x - dx * 0.25, y, z - dz * 0.25]));
+        ctx.lineTo(...flat([x + dx * 0.3, y, z + dz * 0.3]));
+        ctx.lineWidth = 1.3 * INK;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = `rgb(${party.gulls ? '244,244,240' : '40,38,42'})`;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
   // His pose at this instant: every block of him, the feet first.
   function bolsterBody(g) {
     if (g.body) return g.body;
     const { leg, feet, k, ph } = g, out = [];
     const [hx, hz] = headingAt(leg, g.d), F = [hx, 0, hz], R = [-hz, 0, hx];
     const slope = slopeAt(leg, g.d), step = feet[k + 2] - feet[k + 1];
-    const print = (j) => footfall(leg, j);
-    const down = print(k + 1), last = print(k), next = print(k + 2);
+    const print = (j) => footfall(leg, j), rest = g.rest, still = rest ? rest.still : 0;
+    const down = print(k + 1), ahead = print(k + 2);
+    // In a stop the hind foot comes up beside the other: a spot of its own, as far to the other side of the route.
+    let beside = null;
+    if (rest) {
+      if (!leg.prints.has(-k)) {
+        const [fx, fz] = down.f, x = down.p[0] + fz * down.side * 0.88, z = down.p[2] - fx * down.side * 0.88;
+        leg.prints.set(-k, { ...down, p: [x, heightAt(x, z), z], side: -down.side });
+      }
+      beside = leg.prints.get(-k);
+    }
+    const last = rest && rest.off ? beside : print(k), next = rest && !rest.off ? beside : ahead;
     // The foot in the air: it stays down for the first seventh of the step, while the weight comes over, then
     // swings through to its next place, slow at both ends and quickest in the middle, as a pendulum does.
-    const u = Math.min(1, Math.max(0, (ph - 0.14) / 0.86)), go = (1 - Math.cos(Math.PI * u)) / 2;
+    const part = rest ? (rest.off ? 1 - rest.u : rest.u) : ph; // how far this swing has got
+    const u = Math.min(1, Math.max(0, (part - 0.14) / 0.86)), go = (1 - Math.cos(Math.PI * u)) / 2;
     const air = plus(last.p, plus(next.p, last.p, -1), go);
     air[1] = Math.max(air[1], heightAt(air[0], air[2])) + 0.42 * Math.sin(Math.PI * u) ** 1.3;
     const swing = {
       p: air, side: last.side,
       f: unit([last.f[0] + (next.f[0] - last.f[0]) * go, 0, last.f[1] + (next.f[1] - last.f[1]) * go]),
       // The heel comes up before the foot leaves the ground; in the air the toes point down, then up to land.
-      tilt: u > 0 ? last.tilt + (next.tilt - last.tilt) * go + Math.sin(Math.PI * u) * (0.5 * u - 0.55 * (1 - u)) - 0.35 * (1 - u) ** 3 : last.tilt - 0.35 * (ph / 0.14),
+      tilt: u > 0 ? last.tilt + (next.tilt - last.tilt) * go + Math.sin(Math.PI * u) * (0.5 * u - 0.55 * (1 - u)) - 0.35 * (1 - u) ** 3 : last.tilt - 0.35 * (part / 0.14),
     };
     const stance = { p: down.p, side: down.side, f: [down.f[0], 0, down.f[1]], tilt: down.tilt };
     // The hips: over the route, swaying toward the foot that bears the weight, lowest with both feet down and
     // highest over the standing leg. Four fifths of the drop a stiff leg would give; the knees take the rest.
     const reach = HIP - ANKLE, drop = 0.8 * (reach - Math.sqrt(Math.max(0.1, reach * reach - (step * step) / 4)));
     const ground = heightAt(g.x, g.z), sway = down.side * 0.16 * Math.sin(Math.PI * ph);
-    const hips = [g.x + R[0] * sway, ground + HIP - (drop * (1 + Math.cos(2 * Math.PI * ph))) / 2, g.z + R[2] * sway];
+    // Standing, he is at his full height and breathes.
+    const sink = rest ? drop * (1 - still) + 0.02 * still * (1 + Math.sin(g.since * 1.3)) : (drop * (1 + Math.cos(2 * Math.PI * ph))) / 2;
+    const hips = [g.x + R[0] * sway, ground + HIP - sink, g.z + R[2] * sway];
     const knees = [];
     for (const foot of [stance, swing]) {
       // The foot turns about its ball; the ankle sits over the heel end. Then the knee, bent forward as far as the
@@ -2402,7 +2518,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     // The wind as he feels it: the wind over the land less his own pace, in gusts. It pulls at the hem of his tunic,
     // at his hair and at his beard, each by its own weight.
     const t = g.n * LEG + g.since, gusts = 1 + (WEATHER.gust / (Math.hypot(...WEATHER.wind) || 1) - 1) * (0.5 + 0.5 * Math.sin(t * 0.7)) + 0.12 * Math.sin(t * 5.3) + 0.08 * Math.sin(t * 8.9 + 1);
-    const felt = [WEATHER.wind[0] * gusts - F[0] * STRIDE, 0, WEATHER.wind[1] * gusts - F[2] * STRIDE], force = Math.hypot(felt[0], felt[2]) || 1;
+    const felt = [WEATHER.wind[0] * gusts - F[0] * STRIDE * (1 - still), 0, WEATHER.wind[1] * gusts - F[2] * STRIDE * (1 - still)], force = Math.hypot(felt[0], felt[2]) || 1;
     const blow = (give, most) => [(felt[0] / force) * Math.min(most, force * give), 0, (felt[2] / force) * Math.min(most, force * give)];
     // He leans into a hill and back from a fall, and his head stays on the road ahead.
     const lean = Math.min(0.4, Math.max(-0.2, 0.07 + (slope > 0 ? 1.1 : 0.8) * Math.atan(slope)));
@@ -2413,12 +2529,14 @@ Work step by step, check the licences of the data you use, and ask me about the 
     out.push(block(hips, bF, R, bU, [-0.71, 0.71], [-1.08, 1.08], [0.05, 0.32], BELT, 0.6));
     out.push(block(plus(hips, UP, -0.85), F, R, UP, [0.68, 0.76], [0.5, 0.74], [0, 0.95], STEEL, 0.8)); // the knife at his belt
     // The arms swing against the legs, from the shoulder, with a loose elbow. Great hands.
-    const beat = Math.cos(Math.PI * (k + ph)); // +1 as the left foot lands ahead, -1 as the right one does
+    // +1 as the left foot lands ahead, -1 as the right one does; in a stop the arms come to hang.
+    const beat = rest ? Math.cos(Math.PI * (k + (rest.off ? 1 : 0))) * (1 - still) : Math.cos(Math.PI * (k + ph));
     // After dark the right arm is held out in front and carries a lantern.
     const dark = LIGHT.lamps;
     for (const side of [-1, 1]) {
-      const carry = side > 0 ? dark : 0, swing = 0.42 * beat * side;
-      const a = swing * (1 - 0.8 * carry) + 0.5 * carry, bend = (0.3 + 0.25 * Math.max(0, Math.sin(swing) * 2)) * (1 - carry) + 1.05 * carry;
+      // Standing to look, he lifts his left hand to shade his eyes.
+      const carry = side > 0 ? dark : 0, brow = side < 0 ? still : 0, swing = 0.42 * beat * side;
+      const a = (swing * (1 - 0.8 * carry) + 0.5 * carry) * (1 - brow) + 2.45 * brow, bend = ((0.3 + 0.25 * Math.max(0, Math.sin(swing) * 2)) * (1 - carry) + 1.05 * carry) * (1 - brow) + 1.95 * brow;
       const dir = (ang) => plus([bF[0] * Math.sin(ang), bF[1] * Math.sin(ang), bF[2] * Math.sin(ang)], bU, -Math.cos(ang));
       const shoulder = plus(plus(hips, bU, 1.3), R, side * 1.27), elbow = plus(shoulder, dir(a), 1.05), wrist = plus(elbow, dir(a + bend), 0.8);
       const hand = plus(wrist, dir(a + bend), 0.6);
@@ -2432,14 +2550,18 @@ Work step by step, check the licences of the data you use, and ask me about the 
         out.lamp = plus(lamp, UP, -0.3);
       }
     }
-    const nod = lean * 0.45, hU = plus([F[0] * Math.sin(nod), 0, F[2] * Math.sin(nod)], UP, Math.cos(nod)), hF = plus([F[0] * Math.cos(nod), 0, F[2] * Math.cos(nod)], UP, -Math.sin(nod));
+    // His head: it nods with the lean, and in a stop it turns to what he looks at, as far as a neck goes.
+    const to = rest && rest.look ? unit([rest.look.x - g.x, 0, rest.look.z - g.z]) : F;
+    const turn = Math.max(-1.3, Math.min(1.3, Math.atan2(dot(to, R), dot(to, F)))) * still, tc = Math.cos(turn), ts = Math.sin(turn);
+    const H = [F[0] * tc + R[0] * ts, 0, F[2] * tc + R[2] * ts], hR = [R[0] * tc - F[0] * ts, 0, R[2] * tc - F[2] * ts];
+    const nod = lean * 0.45, hU = plus([H[0] * Math.sin(nod), 0, H[2] * Math.sin(nod)], UP, Math.cos(nod)), hF = plus([H[0] * Math.cos(nod), 0, H[2] * Math.cos(nod)], UP, -Math.sin(nod));
     const neck = plus(hips, bU, 1.45);
-    out.push(block(neck, hF, R, hU, [-0.52, 0.52], [-0.56, 0.56], [0, 1.12], FLESH, 0.4));
-    for (const side of [-1, 1]) out.push(block(neck, hF, R, hU, [0.52, 0.57], [side * 0.26 - 0.13, side * 0.26 + 0.13], [0.63, 0.82], EYE, 1));
-    out.push(block(neck, hF, R, hU, [0.26, 0.76], [-0.52, 0.52], [-0.48, 0.45], STRAW, 0.9, undefined, blow(0.035, 0.5)));
-    out.push(block(neck, hF, R, hU, [-0.74, -0.45], [-0.6, 0.6], [-0.22, 1.04], MANE, 0.5, undefined, blow(0.04, 0.55)));
-    out.push(block(neck, hF, R, hU, [-0.67, 0.37], [-0.63, 0.63], [0.97, 1.56], MANE, 0.7));
-    out.push(block(neck, hF, R, hU, [-0.71, 0.43], [-0.67, 0.67], [1.04, 1.23], LEAF, 0.9));
+    out.push(block(neck, hF, hR, hU, [-0.52, 0.52], [-0.56, 0.56], [0, 1.12], FLESH, 0.4));
+    for (const side of [-1, 1]) out.push(block(neck, hF, hR, hU, [0.52, 0.57], [side * 0.26 - 0.13, side * 0.26 + 0.13], [0.63, 0.82], EYE, 1));
+    out.push(block(neck, hF, hR, hU, [0.26, 0.76], [-0.52, 0.52], [-0.48, 0.45], STRAW, 0.9, undefined, blow(0.035, 0.5)));
+    out.push(block(neck, hF, hR, hU, [-0.74, -0.45], [-0.6, 0.6], [-0.22, 1.04], MANE, 0.5, undefined, blow(0.04, 0.55)));
+    out.push(block(neck, hF, hR, hU, [-0.67, 0.37], [-0.63, 0.63], [0.97, 1.56], MANE, 0.7));
+    out.push(block(neck, hF, hR, hU, [-0.71, 0.43], [-0.67, 0.67], [1.04, 1.23], LEAF, 0.9));
     return (g.body = out);
   }
 
@@ -2475,8 +2597,84 @@ Work step by step, check the licences of the data you use, and ask me about the 
       }
     }
   }
+  // What hides him. The giant is drawn over the map, so whatever stands between him and the camera has to be put
+  // back over him: the land first, then houses, trees and hedges.
+  //
+  // The land: looking from his feet toward the camera, the ground that rises above the line of sight hides him up
+  // to its skyline. That is worked out for nine lines of sight across his width, as far toward the camera as a
+  // hill could still reach up to him, and gives the lower edge of what may be drawn; null when nothing hides him.
+  function skyline(g) {
+    const { c, s } = VIEW, reach = Math.min(420, ((M.area.terrain?.max ?? 200) - heightAt(g.x, g.z) + 2) / 0.5774), line = [];
+    let hidden = false;
+    for (let o = -3.2; o <= 3.21; o += 0.8) {
+      const x = g.x + c * o, z = g.z + s * o, far = depthOf(x, z), feet = far / 2 + heightAt(x, z) * COS30;
+      let high = feet - 2;
+      for (let t = 3; t < reach; t += t < 60 ? 2 : 6) high = Math.max(high, (far - t) / 2 + heightAt(x - s * t, z + c * t) * COS30);
+      hidden ||= high > feet + 0.1;
+      line.push([(x * c + z * s) * M.scale + M.width / 2, (M.top - high) * M.scale]);
+    }
+    return hidden ? line : null;
+  }
+  // Houses, trees and hedges (solids.json, scripts/build_solids.py): the outline of each as it stands on the map,
+  // for those that are level with him across the screen and nearer to the camera. Where they are, the layer of
+  // buildings and trees is drawn once more, over him. Without that file (an older build of the map) he goes under
+  // that layer whole where the road data say something is in front, as before.
+  let solids = null;
+  fetch('solids.json', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+    const grid = new Map(), put = (item) => {
+      const key = `${Math.floor(item.x / CELL)},${Math.floor(item.z / CELL)}`;
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(item);
+    };
+    for (const [ground, top, ...ring] of d.buildings) {
+      const pts = [];
+      for (let i = 0; i < ring.length; i += 2) pts.push([ring[i] / 10, ring[i + 1] / 10]);
+      put({ pts, ground: ground / 10, top: top / 10, x: pts.reduce((t, q) => t + q[0], 0) / pts.length, z: pts.reduce((t, q) => t + q[1], 0) / pts.length });
+    }
+    for (let i = 0; i < d.trees.length; i += 5) put({ x: d.trees[i] / 10, z: d.trees[i + 1] / 10, ground: d.trees[i + 2] / 10, h: d.trees[i + 3] / 10, r: d.trees[i + 4] / 10 });
+    solids = grid;
+  }).catch(() => {});
+  function inFront(g) {
+    const { c, s } = VIEW, across = (x, z) => x * c + z * s, u = across(g.x, g.z), far = depthOf(g.x, g.z), out = [];
+    const cx = Math.floor(g.x / CELL), cz = Math.floor(g.z / CELL);
+    for (let i = cx - 1; i <= cx + 1; i++) for (let j = cz - 1; j <= cz + 1; j++) for (const it of solids.get(`${i},${j}`) || []) {
+      if (it.pts) {
+        // A building: the stretch of it that lies level with him across the screen, and whether that is nearer.
+        let lo = Infinity, hi = -Infinity, near = Infinity;
+        for (let k = 0; k < it.pts.length; k++) {
+          const [ax, az] = it.pts[k], [bx, bz] = it.pts[(k + 1) % it.pts.length], ua = across(ax, az), ub = across(bx, bz);
+          lo = Math.min(lo, ua), hi = Math.max(hi, ua);
+          for (const at of [u - 1.5, u, u + 1.5]) if ((ua - at) * (ub - at) <= 0 && ua !== ub) near = Math.min(near, depthOf(ax + ((bx - ax) * (at - ua)) / (ub - ua), az + ((bz - az) * (at - ua)) / (ub - ua)));
+        }
+        if (hi < u - 1.5 || lo > u + 1.5 || near > far - 0.4 || depthOf(it.x, it.z) > far) continue;
+        out.push(hull([...it.pts.map(([x, z]) => flat([x, it.ground - 1, z])), ...it.pts.map(([x, z]) => flat([x, it.top, z]))]));
+      } else {
+        // A tree or a bush: its crown as an oval, and its trunk.
+        const wide = Math.max(it.r, it.h < 5.5 ? it.h * 0.55 : 1.2);
+        if (Math.abs(across(it.x, it.z) - u) > wide + 1.5 || depthOf(it.x, it.z) > far - 0.4) continue;
+        const half = it.h < 5.5 ? it.h * 0.6 : Math.max(1.2, it.h * 0.38), [px, py] = flat([it.x, it.ground + it.h - half, it.z]), k = M.scale;
+        const oval = [];
+        for (let a = 0; a < 6.28; a += 0.52) oval.push([px + Math.cos(a) * wide * k, py + Math.sin(a) * (half * COS30 + wide / 2) * k]);
+        const [tx, ty] = flat([it.x, it.ground, it.z]);
+        out.push(oval, [[tx - 0.5 * k, ty], [tx + 0.5 * k, ty], [px + 0.5 * k, py], [px - 0.5 * k, py]]);
+      }
+    }
+    return out;
+  }
   function drawBolster(ctx, g) {
-    const body = bolsterBody(g);
+    const body = bolsterBody(g), land = skyline(g);
+    if (land) {
+      // Only above the skyline of the land in front of him.
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(land[0][0] - 9 * M.scale, land[0][1]);
+      for (const [x, y] of land) ctx.lineTo(x, y);
+      const end = land[land.length - 1];
+      ctx.lineTo(end[0] + 9 * M.scale, end[1]);
+      ctx.lineTo(end[0] + 9 * M.scale, end[1] - 60 * M.scale);
+      ctx.lineTo(land[0][0] - 9 * M.scale, land[0][1] - 60 * M.scale);
+      ctx.clip();
+    }
     drawFootfalls(ctx, g);
     drawBlocks(ctx, body);
     // Foam where his legs stand in the sea: a ring that breaks up and turns as the water pulls round him.
@@ -2493,6 +2691,26 @@ Work step by step, check the licences of the data you use, and ask me about the 
         ctx.stroke();
       }
       ctx.setLineDash([]);
+    }
+    if (land) ctx.restore();
+    // And over him again, the houses and trees that stand in front: OpenSeadragon draws its layer of them once
+    // more, into this canvas, inside their outlines only.
+    const cover = solids && objectsLayer && ctx.canvas === layer ? inFront(g) : [];
+    if (cover.length) {
+      ctx.save();
+      ctx.beginPath();
+      for (const pts of cover) {
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath();
+      }
+      ctx.clip();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      const drawer = viewer.drawer, own = drawer.context;
+      drawer.context = ctx;
+      try { objectsLayer.draw(); } finally { drawer.context = own; }
+      ctx.restore();
     }
   }
 
@@ -2627,6 +2845,9 @@ Work step by step, check the licences of the data you use, and ask me about the 
     }
     ctx.globalAlpha = 1;
     if (inView) for (const f of flocks) for (const bird of f.birds) drawBird(ctx, f, bird, inView);
+    // The birds that sit on the giant's way, and go up when he comes: also while he is gone for this visitor.
+    const g = inView && k * M.scale >= 2.5 && bolsterAt(unix());
+    if (g) drawBirdParties(ctx, g, inView);
   }
 
   // The sky. The light on the map follows the real sun over St Agnes (50.31° N, 5.20° W): where it stands in the sky
