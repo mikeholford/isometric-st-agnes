@@ -462,12 +462,16 @@ def main():
     img *= upsample(relief)[..., None]
     del relief, lit, nrm, sgx, sgy
 
-    # Baked shadows: of the land on itself (the cliffs on the coves), and of buildings and trees, plus a contact
-    # shadow along every wall.
+    # Baked shadows: of the land on itself (the cliffs on the coves), and of buildings and trees. They are soft at
+    # the edge, more so the further the shadow falls from what casts it, and a contact shadow runs along every wall.
     shadow, contact = compute_shadows(dtm_lo, sea_lo)
-    img *= np.where(shadow[..., None], np.array((0.62, 0.66, 0.8), np.float32), 1.0)
-    img[contact] *= 0.8
+    img *= 1 - upsample(shadow)[..., None] * (1 - np.array((0.62, 0.66, 0.8), np.float32))
+    img[contact] *= 0.88
     del shadow, contact
+
+    # And the light of the sky: ground that sees less of it is darker. The foot of a wall, the floor of a coombe,
+    # the earth under trees.
+    img *= upsample(sky_light(dtm_lo, sea_lo))[..., None]
 
     # A kerb: the outer half metre of every road a little darker.
     img[road_rim] *= 0.74
@@ -576,10 +580,34 @@ def paint_osm(img, cat):
         sub[np.array(lines) > 0] = np.array((240, 240, 236), np.float32)
 
 
+def sky_light(dtm, sea):
+    """How much of the sky each cell of ground sees, as a factor for its colour: 1 in the open, down to about six tenths
+    in a corner between walls or deep under trees. From the lidar's first-return surface (roofs and tree tops included): in twelve
+    directions, how high the surface around stands above the horizon of this cell, out to 26 m."""
+    dsm = np.load(BUILD / "dsm.npy")
+    blocked = np.zeros(dtm.shape, np.float32)
+    for k in range(12):
+        a = 2 * math.pi * k / 12
+        high = np.zeros(dtm.shape, np.float32)  # the steepest rise to anything that way, as a tangent
+        for r in (1, 2, 3, 5, 8, 12, 18, 26):
+            ox, oy = int(round(math.sin(a) * r)), int(round(-math.cos(a) * r))
+            np.maximum(high, (shift(dsm, ox, oy, -1e6) - dtm - 0.3) / (math.hypot(ox, oy) * LIDAR_RES), out=high)
+        blocked += high / np.sqrt(1 + high * high)  # the sine of that angle: the slice of sky it takes
+    light = 1 - 0.42 * ndi.gaussian_filter(blocked / 12, 0.8)
+    light[sea] = 1.0
+    return np.clip(light, 0.58, 1.0)
+
+
+# The sun is not a point: its light comes from a patch of sky, here taken five degrees wide, wider than the real
+# sun and near what a hazy day gives. A shadow is tested from the middle of that patch and from six places round
+# it, and each cell is in shadow by the share of them that it cannot see.
+SUN_PATCH = [(0.0, 0.0)] + [(2.5 * math.sin(k * math.pi / 3), 2.5 * math.cos(k * math.pi / 3)) for k in range(6)]
+
+
 def compute_shadows(dtm, sea):
-    """Hard shadows at lidar resolution, upsampled to the ground raster: the land's own (a cliff over a cove), and
-    those of building roofs and tree crowns, which stand on ground that may be higher or lower than where their
-    shadow falls. Returns (shadow, contact shadow along walls)."""
+    """Shadows at lidar resolution, as the share of the sun each cell cannot see (0 to 1): the land's own (a cliff
+    over a cove), and those of building roofs and tree crowns, which stand on ground that may be higher or lower
+    than where their shadow falls. Returns (shadow, contact shadow along walls, upsampled)."""
     res = LIDAR_RES
     ny, nx = dtm.shape
     top = np.zeros((ny, nx), np.float32)  # height of the top of what stands on a cell, above its ground
@@ -628,26 +656,30 @@ def compute_shadows(dtm, sea):
         sb = bot[r0:r1, c0:c1]
         np.minimum(sb, np.where(inside, mid - s, np.inf), out=sb)
 
-    az, el = math.radians(SUN_AZIMUTH), math.radians(SUN_ELEVATION)
-    dx, dy = math.sin(az), -math.cos(az)  # toward the sun, in columns and rows
-    shadow = np.zeros((ny, nx), bool)
     occupied = top > 0.3
     obj_top, obj_bot = dtm + top, dtm + np.where(np.isinf(bot), 1e6, bot)
     reach = float(top.max())
     relief = float(dtm.max() - dtm.min())
-    steps = int(relief / math.tan(el) / res) + 1
-    for k in range(1, steps + 1):
-        ox, oy = int(round(dx * k)), int(round(dy * k))
-        ray = dtm + k * res * math.tan(el)  # height of the sun ray from each cell, k cells toward the sun
-        land = shift(dtm, ox, oy, -1e6)
-        hit = land > ray + 0.6
-        if k * res * math.tan(el) <= reach + 40:
-            # Objects only matter close by: beyond their height (and some slope) they cannot reach the ray.
-            hit |= (shift(obj_top, ox, oy, -1e6) >= ray) & (shift(obj_bot, ox, oy, 1e6) <= ray) & shift(occupied, ox, oy, False)
-        shadow |= hit
-    shadow &= ~occupied & ~sea
+    shadow = np.zeros((ny, nx), np.float32)
+    for daz, delv in SUN_PATCH:
+        az, el = math.radians(SUN_AZIMUTH + daz / math.cos(math.radians(SUN_ELEVATION))), math.radians(SUN_ELEVATION + delv)
+        dx, dy = math.sin(az), -math.cos(az)  # toward the sun, in columns and rows
+        dark = np.zeros((ny, nx), bool)
+        steps = int(relief / math.tan(el) / res) + 1
+        for k in range(1, steps + 1):
+            ox, oy = int(round(dx * k)), int(round(dy * k))
+            ray = dtm + k * res * math.tan(el)  # height of the sun ray from each cell, k cells toward the sun
+            land = shift(dtm, ox, oy, -1e6)
+            hit = land > ray + 0.6
+            if k * res * math.tan(el) <= reach + 40:
+                # Objects only matter close by: beyond their height (and some slope) they cannot reach the ray.
+                hit |= (shift(obj_top, ox, oy, -1e6) >= ray) & (shift(obj_bot, ox, oy, 1e6) <= ray) & shift(occupied, ox, oy, False)
+            dark |= hit
+        shadow += dark
+    shadow /= len(SUN_PATCH)
+    shadow[occupied | sea] = 0
     contact = ndi.binary_dilation(occupied & (bot < 0.5) & (top > 1.5), iterations=1) & ~occupied
-    return upsample(shadow) > 0.5, upsample(contact, smooth=False) > 0.5
+    return shadow, upsample(contact, smooth=False) > 0.5
 
 
 def shift(a, ox, oy, fill):

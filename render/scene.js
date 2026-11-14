@@ -637,6 +637,22 @@ const outlineShader = {
       gap = max(gap, depthAt(vUv - vec2(texel.x * ink, 0.0)) - d);
       gap = max(gap, depthAt(vUv + vec2(0.0, texel.y * ink)) - d);
       gap = max(gap, depthAt(vUv - vec2(0.0, texel.y * ink)) - d);
+      // The light of the sky on what stands up: a spot with nearer things close around it on the screen sees less
+      // sky and is darker. The foot of a wall where it meets the ground, the gap between two houses, the inside of a
+      // crown. Eight places in a ring 1.2 m wide; a thing more than 4 m nearer is in front, not beside, and does not
+      // count. (The ground has its own, from the lidar, in its texture: scripts/build_ground.py.)
+      // "Nearer" is measured against the surface this pixel lies on, carried on to where the neighbour is: on level
+      // ground or a plain wall the neighbours are where that says, and nothing darkens.
+      vec2 lie = 0.5 * vec2(depthAt(vUv + vec2(texel.x, 0.0)) - depthAt(vUv - vec2(texel.x, 0.0)), depthAt(vUv + vec2(0.0, texel.y)) - depthAt(vUv - vec2(0.0, texel.y)));
+      lie = clamp(lie, -0.8 / ink, 0.8 / ink);
+      float shut = 0.0;
+      for (int i = 0; i < 8; i++) {
+        float a = float(i) * 0.7854 + 0.39;
+        vec2 step = vec2(cos(a), sin(a)) * ink * 6.0;
+        float near = d + dot(lie, step) - depthAt(vUv + step * texel);
+        shut += smoothstep(0.15, 1.2, near) * (1.0 - smoothstep(2.5, 4.0, near));
+      }
+      c.rgb *= 1.0 - 0.3 * shut / 8.0;
       // A big step in depth means this pixel is the near side of a silhouette: ink it.
       if (gap > 2.2) c.rgb *= 0.58;
       gl_FragColor = vec4(c.rgb, 1.0);
