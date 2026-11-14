@@ -28,6 +28,12 @@ He walks as a body of his size would. A leg swings like a pendulum of its own le
 
 His shadow is cast by the real sun over St Agnes at this minute (`sunAt`), along the land as it rises and falls, crisp at his feet and soft at his head. After dark he carries a lantern that lights the road around him.
 
+His feet leave prints. In sand they are deep and they stay until the sea has been over them or half a day has passed, so a beach shows the prints of every leg since the last tide that reached them, worked out again from the time. In grass they are faint and gone in a minute and a half; on a road there is only dust where a foot comes down, or a splash when it rains. Where the tide is in he wades, and the sea foams round his legs.
+
+The tide is real and needs no server: `tideAt` adds up eleven tidal constituents fitted to a hundred days of modelled sea level off St Agnes (Open-Meteo marine data), and that model's high and low waters were checked against the Newlyn tide gauge (within about four minutes). The viewer draws the sea as it stands now over the low water of the tiles, and walkers keep off the sand it covers. It is for footprints, not for putting to sea.
+
+The wind and the rain are real too: the browser reads the weather now from Open-Meteo every ten minutes (no key, nothing about the visitor is sent but the request itself). The wind pulls at the hem of his tunic, his hair and his beard; rain darkens him, falls over the map and fades the shadows under cloud. `?weather=14,250,3` sets wind speed, direction and rain by hand.
+
 A line in the menu passes on the rumour of where he is, and it sharpens as his leg goes on: first only which way from the village, then the nearest landmark, then the place the ground just shook, and in the last five minutes the road he is on and the way he walks. The card of a find keeps a tally in the visitor's own browser (finds, days in a row, finds in the first two minutes of a leg, which get a card with a gold edge), quotes a line of Robert Hunt's telling of 1865 that belongs to the place, and shares a sentence with the link. The quotes are verbatim, checked against four scans of the book at the Internet Archive; Hunt prints the coves as Chapel Forth and Trevaunance Forth. Everything is static: a list of everyone's finds, or a count of who found him first, would need a server.
 
 ## Light and lens
