@@ -55,6 +55,7 @@ m.update({k: m["views"][0][k] for k in ("tiles", "objects") if k in m["views"][0
 json.dump(m, open(f"{site}/map.json", "w"))
 PY
 cp viewer/index.html data/build/places.json data/build/hotspots.json data/build/routes.json data/build/traffic.json data/build/roads.json data/build/height.bin "$SITE/"
+[ -f data/build/solids.json ] && cp data/build/solids.json "$SITE/"
 [ -f viewer/og.png ] && cp viewer/og.png "$SITE/"
 [ -d data/build/photos ] && cp -r data/build/photos "$SITE/photos"
 [ -d viewer/music ] && cp -r viewer/music "$SITE/music"

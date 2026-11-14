@@ -21,6 +21,7 @@ SS="${SS:-2}"
 (builtin cd scripts && python3 build_routes.py)
 (builtin cd scripts && uv run --quiet build_roads.py)
 (builtin cd scripts && uv run --quiet build_traffic.py)
+(builtin cd scripts && uv run --quiet build_solids.py)
 
 [ -d node_modules ] || bun install
 # Every view in scripts/config.py, each with the mask of buildings and trees that the viewer draws again over the

@@ -30,6 +30,10 @@ His shadow is cast by the real sun over St Agnes at this minute (`sunAt`), along
 
 His feet leave prints. In sand they are deep and they stay until the sea has been over them or half a day has passed, so a beach shows the prints of every leg since the last tide that reached them, worked out again from the time. In grass they are faint and gone in a minute and a half; on a road there is only dust where a foot comes down, or a splash when it rains. Where the tide is in he wades, and the sea foams round his legs.
 
+Two to four times a leg he stops for a quarter of a minute, draws his feet together, shades his eyes and looks at the nearest landmark (`pauses`): when and for how long comes from dice of their own, so his route is what it was. Parties of gulls and rooks sit along his way and go up as he comes within 26 m, which shows his size. Like the pace, the stops begin with a leg set in the code (`PAUSES_FROM`), so older links keep their spot.
+
+What stands in front of him hides him, in every view: the land by its skyline as seen from his feet (he can be lost behind the Beacon), and houses, trees and hedges by their outlines (`scripts/build_solids.py` writes `solids.json`), inside which the viewer draws its layer of buildings and trees once more over him.
+
 The tide is real and needs no server: `tideAt` adds up eleven tidal constituents fitted to a hundred days of modelled sea level off St Agnes (Open-Meteo marine data), and that model's high and low waters were checked against the Newlyn tide gauge (within about four minutes). The viewer draws the sea as it stands now over the low water of the tiles, and walkers keep off the sand it covers. It is for footprints, not for putting to sea.
 
 The wind and the rain are real too: the browser reads the weather now from Open-Meteo every ten minutes (no key, nothing about the visitor is sent but the request itself). The wind pulls at the hem of his tunic, his hair and his beard; rain darkens him, falls over the map and fades the shadows under cloud. `?weather=14,250,3` sets wind speed, direction and rain by hand.
