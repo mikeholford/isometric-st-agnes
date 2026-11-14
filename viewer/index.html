@@ -104,7 +104,9 @@
   #found { font-size: 12px; color: var(--peat); min-height: 1em; }
   #places, #series { display: flex; flex-wrap: wrap; gap: 6px; }
   #series { align-items: center; }
-  #series > span { font: 500 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+  #series > span { font: 500 11px/1 var(--mono); letter-spacing: 0.04em; color: var(--muted); margin-right: 2px; }
+  /* The rumour: where people say the giant is. It stays in view when the menu is folded. */
+  #intro #rumour { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--peat); text-wrap: pretty; }
   button {
     font: 500 12px/1 var(--body);
     color: var(--fg);
@@ -268,6 +270,13 @@
   .card figcaption, .card .src { font-size: 11px; color: #7a6650; }
   .card .more a { font-weight: 500; color: #8a5a2b; }
   .card a { color: inherit; }
+  /* A few words from the old book on the card of a find, with where they come from. */
+  .card blockquote { margin: 0; padding: 2px 0 2px 12px; border-left: 3px solid #c9b48a; }
+  .card blockquote p { font: 500 14px/1.5 var(--display); color: #4a3523; }
+  .card blockquote cite { display: block; margin-top: 4px; font-size: 11px; font-style: normal; color: #7a6650; }
+  /* Found in the first two minutes of his walk: a card with a gold edge. */
+  #bolster.early { border-color: #b8862b; box-shadow: 0 0 0 2px #e4c26a, 0 8px 30px #0009; }
+  #bolster.early .card-head { color: #96690f; }
   #info .frame { height: 200px; }
   #info .links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
   /* The buttons stay in view while a long card scrolls under them. */
@@ -370,10 +379,11 @@
     <h1>St Agnes</h1>
     <button type="button" id="intro-toggle" aria-expanded="true" aria-controls="intro-body" aria-label="Show or hide the menu"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 5l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
+  <p id="rumour" aria-live="polite" hidden></p>
   <div id="intro-body">
   <p>The mining village on the north coast of Cornwall in miniature, from Chapel Porth and Wheal Coates over the Beacon to Trevaunance Cove.</p>
   <p class="long">Every house, every hedge and every tree stands in its real place, and the land has its real shape, rebuilt from open maps and laser height measurements. Scroll or pinch to zoom, or look up a street or place below. Point at a road to see its name. Hold ⌘ (or Ctrl) and drag to turn the map.</p>
-  <p class="long">Bolster the giant is out walking, on a road, a path or the sand. Everyone sees him in the same place. Find him and click him.</p>
+  <p class="long">Bolster the giant is out walking, on a road, a path or the sand. Everyone sees him in the same place. Find him and click him. <span id="tally"></span></p>
   <form id="search" role="search">
     <input id="goto" list="place-list" placeholder="Go to a street or place…" autocomplete="off" aria-label="Go to a street or place">
     <datalist id="place-list"></datalist>
@@ -460,12 +470,13 @@ Work step by step, check the licences of the data you use, and ask me about the 
 </section>
 
 <section id="bolster" class="card" hidden aria-live="polite" aria-label="Bolster the giant">
-  <div class="card-head"><span>BOLSTER THE GIANT</span><span id="bolster-count"></span></div>
+  <div class="card-head"><span id="bolster-kind">Bolster the giant</span><span id="bolster-count"></span></div>
   <h2 id="bolster-title"></h2>
   <p id="bolster-where"></p>
   <p id="bolster-text"></p>
+  <blockquote id="bolster-lore"><p id="bolster-quote"></p><cite id="bolster-source"></cite></blockquote>
   <nav>
-    <button type="button" id="bolster-copy">Copy the link to this find</button>
+    <button type="button" id="bolster-copy">Share this find</button>
     <button type="button" class="close" id="bolster-close">Close</button>
   </nav>
 </section>
@@ -1397,6 +1408,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     });
     for (let i = 0; i < 3; i++) spawnFlock(0.2 + Math.random() * 0.6);
     openBolsterLink();
+    showRumour();
   }
 
   // The layers over the tiles, from the bottom up: the traffic, the light map that is multiplied with all below it,
@@ -1904,14 +1916,94 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
   const when = (t) => new Date(t * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const clockTime = (t) => new Date(t * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  let bolsterLink = '';
-  function showBolsterCard(title, where, text, t, count) {
-    document.getElementById('bolster-title').textContent = title;
-    document.getElementById('bolster-where').textContent = where;
-    document.getElementById('bolster-text').textContent = text;
-    document.getElementById('bolster-count').textContent = count;
-    bolsterLink = `${location.origin}${location.pathname}#bolster=${Math.floor(t)}`;
-    document.getElementById('bolster-copy').textContent = 'Copy the link to this find';
+
+  // What the old book says of him, in its own words: Robert Hunt's telling of 1865, and the letter in which George
+  // Cruikshank, who drew the giant for that book, explains his drawing. Every line was checked word for word
+  // against four scans of the printed book at the Internet Archive (the first edition of 1865 and the editions of
+  // 1881, 1903 and 1908); nothing here is retold or made up. Hunt prints the coves as Chapel Forth and Trevaunance
+  // Forth, and so do these lines. Each belongs to a place, and a find near that place shows it.
+  const HUNT = 'Robert Hunt, Popular Romances of the West of England, 1865: "The Giant Bolster"';
+  const FORTH = `${HUNT}. Forth is how Hunt spells Porth.`;
+  const LORE = [
+    ['beacon', 'Bolster must have been of enormous size: since it is stated that he could stand with one foot on St Agnes\' Beacon and the other on Carn Brea; these hills being distant, as the bird flies, six miles, his immensity will be clear to all.', HUNT],
+    ['beacon', 'Whenever Bolster was angry with his wife, he compelled her to pick stones, and to carry them in her apron to the top of the hill.', HUNT],
+    ['beacon', 'On the top of St Agnes\' Beacon there yet exist the evidences of the useless labours to which this unfortunate giantess was doomed, in grouped masses of small stones.', HUNT],
+    ['chapel', 'In proof of this, there still exists, in the valley running upwards from Chapel Forth, a stone in which may yet be seen the impression of the giant\'s fingers.', FORTH],
+    ['chapel', 'The hole at Chapel Forth still retains the evidences of the truth of this tradition, in the red stain which marks the track down which flowed the giant\'s blood.', FORTH],
+    ['bank', 'He has left his name to a very interesting, and undoubtedly most ancient earthwork, which still exists at the base of the hill, and evidently extended from Trevaunance Forth to Chapel Forth, enclosing the most important tin district in St Agnes.', FORTH],
+    ['', 'He followed her incessantly, proclaiming his love, and filling the air with the tempests of his sighs and groans.', HUNT],
+    ['', 'if a giant could stride six miles across a country, he must be twelve miles in height, according to the proportions of the human figure.', 'George Cruikshank, who drew the giant for Hunt\'s book, in a letter of 18 April 1865 printed in it (the wording of the 1881 edition)'],
+  ];
+  const LORE_AT = { beacon: [171010, 50216], chapel: [169736.5, 49484.8], bank: [171473.9, 49710.3] };
+  // The line for a find: one that belongs to the place if he stood within 700 m of it, else any; which one follows
+  // from the leg, so a friend who opens the link reads the same words.
+  function loreFor(g) {
+    const near = Object.keys(LORE_AT).find((k) => {
+      const o = gridToLocal(...LORE_AT[k]);
+      return Math.hypot(o.x - g.x, o.z - g.z) < 700;
+    });
+    const pool = near ? LORE.filter((l) => l[0] === near) : LORE;
+    return pool[g.n % pool.length];
+  }
+
+  // The visitor's own finds, kept in this browser: how many, how many days in a row, and how many in the first two
+  // minutes of a leg. Nothing leaves the browser, so there is no list of everyone's finds: that would take a server.
+  const dayOf = (t) => { const d = new Date(t * 1000); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+  function readTally() {
+    const s = { finds: 0, last: '', run: 0, best: 0, early: 0 };
+    try {
+      s.finds = parseInt(localStorage.getItem('bolster-finds')) || 0;
+      Object.assign(s, JSON.parse(localStorage.getItem('bolster-tally') || '{}'));
+    } catch {}
+    return s;
+  }
+  function countFind(t, early) {
+    const s = readTally(), today = dayOf(t);
+    s.finds++;
+    if (s.last !== today) s.run = s.last === dayOf(t - 86400) ? s.run + 1 : 1;
+    s.last = today, s.best = Math.max(s.best, s.run), s.early += early ? 1 : 0;
+    try {
+      localStorage.setItem('bolster-finds', s.finds);
+      localStorage.setItem('bolster-tally', JSON.stringify({ last: s.last, run: s.run, best: s.best, early: s.early }));
+    } catch {}
+    return s;
+  }
+  const times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
+  function showTally() {
+    const s = readTally(), live = s.last === dayOf(unix()) || s.last === dayOf(unix() - 86400); // a run ends after a day without a find
+    document.getElementById('tally').textContent = !s.finds ? '' : `You have found him ${times(s.finds)}${live && s.run > 1 ? `, ${s.run} days in a row` : ''}.`;
+  }
+  showTally();
+
+  // The card of a find. `mine` is the visitor's own find just now; otherwise it is a link someone sent.
+  let bolsterShare = null;
+  function showBolsterCard(g, t, mine, s) {
+    const spot = placeName(g.x, g.z), where = spot === 'in St Agnes' ? spot : `${spot} in St Agnes`;
+    const early = g.since < 120, [, quote, source] = loreFor(g);
+    const secs = Math.floor(g.since), took = secs < 60 ? `${secs} seconds` : `${Math.floor(secs / 60)} minute${secs < 120 ? '' : 's'} and ${secs % 60} seconds`;
+    bolsterEl.classList.toggle('early', mine && early);
+    document.getElementById('bolster-kind').textContent = mine && early ? 'Bolster the giant · an early find' : 'Bolster the giant';
+    document.getElementById('bolster-count').textContent = mine && s.finds ? `Your finds: ${s.finds}` : '';
+    document.getElementById('bolster-title').textContent = !mine ? 'Bolster was found here' : early ? 'You caught him setting out!' : 'You found Bolster!';
+    document.getElementById('bolster-where').textContent = `${when(t)}, ${spot}.`;
+    const again = `He walks again at ${clockTime((g.n + 1) * LEG)}, somewhere else on the map.`;
+    const run = mine && s.run > 1 ? ` That is ${s.run} days in a row${s.run === s.best && s.run > 2 ? ', your longest run yet' : ''}.` : '';
+    document.getElementById('bolster-text').textContent = !mine
+      ? 'He has walked on since then. He is always somewhere on the map, on a road, a path or the sand, and everyone sees him in the same place. Can you find him? His story is at the Beacon, Chapel Porth and the Bolster Bank.'
+      : early
+        ? `He had been walking for only ${took}. Hardly anyone finds him that fast${s.early > 1 ? `, and you have now done it ${times(s.early)}` : ''}. He saw you and he is gone. ${again}${run}`
+        : `He saw you and he is gone. ${again}${run} Send the link to a friend: it shows where he stood at this minute.`;
+    document.getElementById('bolster-quote').textContent = `"${quote}"`;
+    document.getElementById('bolster-source').textContent = source;
+    // What goes with the link: a sentence a friend can read before they open it.
+    const day = new Date(t * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
+    bolsterShare = {
+      url: `${location.origin}${location.pathname}#bolster=${Math.floor(t)}`,
+      text: !mine ? `Bolster the giant stood ${where} at ${clockTime(t)} on ${day}. This shows the spot, and he is still out walking:`
+        : early ? `I caught Bolster the giant only ${took} into his walk, ${where}, at ${clockTime(t)} on ${day}. He has walked on, but this shows where he stood. Can you find him?`
+          : `I found Bolster the giant ${where}, at ${clockTime(t)} on ${day}. He has walked on, but this shows where he stood. Can you find him?`,
+    };
+    shareBtn.textContent = navigator.share ? 'Share this find' : 'Copy a message with the link';
     closeInfo();
     bolsterEl.hidden = false;
   }
@@ -1921,9 +2013,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (/^#bolster=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   }
   function foundBolster() {
-    const g = bolsterShown, t = unix();
-    let finds = 0;
-    try { finds = (parseInt(localStorage.getItem('bolster-finds')) || 0) + 1; localStorage.setItem('bolster-finds', finds); localStorage.setItem('bolster-gone', g.n); } catch {}
+    const g = bolsterShown, t = unix(), s = countFind(t, g.since < 120);
+    try { localStorage.setItem('bolster-gone', g.n); } catch {}
     goneLeg = g.n;
     document.getElementById('map').classList.remove('over-bolster');
     tip.hidden = true;
@@ -1931,9 +2022,9 @@ Work step by step, check the licences of the data you use, and ask me about the 
     marker = document.createElement('div');
     marker.className = 'marker';
     anchor(marker, g.x, g.z, 0);
-    showBolsterCard('You found Bolster!', `${when(t)}, ${placeName(g.x, g.z)}.`,
-      `He saw you and he is gone. He walks again at ${clockTime((g.n + 1) * LEG)}, somewhere else on the map. Send the link to a friend: it shows where he stood at this minute.`,
-      t, finds ? `YOUR FINDS: ${finds}` : '');
+    showBolsterCard(g, t, true, s);
+    showTally();
+    showRumour();
   }
   // A link to a find: #bolster=<seconds since 1970>. The place follows from the time, so the link cannot lie.
   function openBolsterLink() {
@@ -1941,19 +2032,54 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (!m || !lanes.length || !viewer) return false;
     const t = parseInt(m[1]), g = bolsterAt(t);
     flyTo(g.x + M.area.cx, M.area.cy - g.z, 0, 1.4, true, 60);
-    showBolsterCard('Bolster was found here', `${when(t)}, ${placeName(g.x, g.z)}.`,
-      'He has walked on since then. He is always somewhere on the map, on a road, a path or the sand, and everyone sees him in the same place. Can you find him? His story is at the Beacon, Chapel Porth and the Bolster Bank.', t, '');
+    showBolsterCard(g, t, false);
     return true;
   }
+  // Sharing: the phone's own share sheet where there is one, else the message and the link on the clipboard.
+  const shareBtn = document.getElementById('bolster-copy');
   document.getElementById('bolster-close').addEventListener('click', closeBolster);
-  document.getElementById('bolster-copy').addEventListener('click', async (e) => {
+  shareBtn.addEventListener('click', async () => {
+    const { text, url } = bolsterShare;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Bolster the giant', text, url }); } catch {} // closed without sharing: nothing to do
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(bolsterLink);
-      e.target.textContent = 'Copied';
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      shareBtn.textContent = 'Copied, ready to paste';
     } catch {
-      prompt('Copy this link', bolsterLink);
+      prompt('Copy this message', `${text} ${url}`);
     }
   });
+
+  // The rumour: a line in the menu about where the giant is said to be. It follows from the time like he does, and
+  // it sharpens as his leg goes on: in the first five minutes only which way from the village, then the landmark
+  // he is nearest, then the place the ground just shook, and in the last five the road he is on and the way he walks.
+  const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+  const toward = (dx, dz) => COMPASS[Math.round(((Math.atan2(dx, -dz) * 180) / Math.PI + 360) / 45) % 8];
+  const nearestOf = (list, g) => list.reduce((best, q) => {
+    const o = gridToLocal(q.x, q.y), d = Math.hypot(o.x - g.x, o.z - g.z);
+    return d < best[1] ? [q.name, d] : best;
+  }, ['', Infinity])[0];
+  function rumour() {
+    const g = bolsterAt(unix());
+    if (!g) return '';
+    if (g.n === goneLeg) return `You found him. He sets out again at ${clockTime((g.n + 1) * LEG)}.`;
+    const stage = Math.floor(g.since / (LEG / 4)), church = gridToLocal(172029.5, 50735.4);
+    const landmark = nearestOf(hotspots, g), place = nearestOf(places, g);
+    if (stage >= 3) return `Bolster is near… he is ${placeName(g.x, g.z)}, walking ${toward(g.dx, g.dz)}.`;
+    if (stage === 2 && place) return `Bolster is near… the ground shook just now by ${place}.`;
+    if (stage >= 1 && landmark) return `Bolster is near… heavy steps were heard toward ${landmark}.`;
+    const far = Math.hypot(g.x - church.x, g.z - church.z);
+    return `Bolster is near… somewhere ${far < 500 ? 'about the village' : `out to the ${toward(g.x - church.x, g.z - church.z)} of the village`}, they say.`;
+  }
+  const rumourEl = document.getElementById('rumour');
+  function showRumour() {
+    const line = rumour();
+    if (line !== rumourEl.textContent) rumourEl.textContent = line;
+    rumourEl.hidden = !line;
+  }
+  setInterval(showRumour, 5000);
   window.addEventListener('hashchange', openBolsterLink);
 
   // The giant, as the old sources have him: Robert Hunt (1865) gives only his size, his great hands and a knife, and

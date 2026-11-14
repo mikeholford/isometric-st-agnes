@@ -28,6 +28,8 @@ He walks as a body of his size would. A leg swings like a pendulum of its own le
 
 His shadow is cast by the real sun over St Agnes at this minute (`sunAt`), along the land as it rises and falls, crisp at his feet and soft at his head. After dark he carries a lantern that lights the road around him.
 
+A line in the menu passes on the rumour of where he is, and it sharpens as his leg goes on: first only which way from the village, then the nearest landmark, then the place the ground just shook, and in the last five minutes the road he is on and the way he walks. The card of a find keeps a tally in the visitor's own browser (finds, days in a row, finds in the first two minutes of a leg, which get a card with a gold edge), quotes a line of Robert Hunt's telling of 1865 that belongs to the place, and shares a sentence with the link. The quotes are verbatim, checked against four scans of the book at the Internet Archive; Hunt prints the coves as Chapel Forth and Trevaunance Forth. Everything is static: a list of everyone's finds, or a count of who found him first, would need a server.
+
 ## Light and lens
 
 The light on the map follows the real sun (`HOURS` in `viewer/index.html`): golden toward sunset, violet in the dusk, moonlit after, with the lamps coming on as it gets dark. A light map is multiplied with the map, so a lamp gives the ground its own colours back. The moon button turns to night or day by hand for the visit. The houses and trees keep the shadows they were rendered with (`scripts/sun.py`); only what moves has a shadow from the sun of the hour.
