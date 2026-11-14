@@ -58,5 +58,7 @@ cp viewer/index.html data/build/places.json data/build/hotspots.json data/build/
 [ -f viewer/og.png ] && cp viewer/og.png "$SITE/"
 [ -d data/build/photos ] && cp -r data/build/photos "$SITE/photos"
 [ -d viewer/music ] && cp -r viewer/music "$SITE/music"
+# Places rendered deep (deep/scene.py), if there are any: their tiles and the list of them.
+[ -d out/deep ] && python3 deep/publish.py "$SITE"
 touch "$SITE/.nojekyll"
 echo "$SITE/ is ready: $(find "$SITE" -type f | wc -l) files, $(du -sh "$SITE" | cut -f1)"
