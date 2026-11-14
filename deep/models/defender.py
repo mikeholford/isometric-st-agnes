@@ -13,6 +13,11 @@ rolled up along the left of the roof.
   uv run deep/models/defender.py                 pictures from where the four photographs were taken, and the car
                                                  as the map sees it from eight sides, in out/models/defender/
   uv run deep/models/defender.py --only map      just one of them: front, side, rear, quarter or map
+  uv run deep/models/defender.py --place 1340,925,45
+                                                 the car stood in the picture of a deep place (out/deep/churchtown-45/
+                                                 picture.jpg, or --onto another): where in the picture, in its pixels,
+                                                 and which way the car points, in degrees clockwise from north.
+                                                 Several cars: 1340,925,45/600,300,135
   --samples 64    rays through every pixel
   --device cpu    cpu or gpu
   --bag           with the black bag on the roof, as on the mountain road
@@ -45,37 +50,121 @@ def linear(c):
     return tuple(((v / 255 + 0.055) / 1.055) ** 2.4 if v / 255 > 0.04045 else v / 255 / 12.92 for v in c) + (1.0,)
 
 
-def paint(name, colour, rough=0.5, metal=0.0, coat=0.0, glow=0.0):
+def paint(name, colour, rough=0.5, metal=0.0, coat=0.0, glow=0.0, wear=None, clear=False, root=None):
+    """A material. `wear` is what thirty years outdoors have done to it, as four amounts from 0 to 1: dust thrown up
+    from the road (thick by the sills, none on the roof), dirt gathered where parts meet, paint bleached chalky
+    where it faces the sun, and how unevenly all of that lies. It is laid out in the car's own measure (`root`), so
+    a patch of dirt stays on its panel whichever way the car is turned."""
     m = bpy.data.materials.new(name)
     m.use_nodes = True
-    b = m.node_tree.nodes['Principled BSDF']
+    nt = m.node_tree
+    b = nt.nodes['Principled BSDF']
     b.inputs['Base Color'].default_value = linear(colour)
     b.inputs['Roughness'].default_value = rough
     b.inputs['Metallic'].default_value = metal
     b.inputs['Coat Weight'].default_value = coat
+    if clear:
+        b.inputs['Transmission Weight'].default_value, b.inputs['IOR'].default_value = 1.0, 1.45
     if glow:
         b.inputs['Emission Color'].default_value = linear(colour)
         b.inputs['Emission Strength'].default_value = glow
+    if not wear:
+        return m
+    dust, grime, fade, vary = wear
+    link = nt.links.new
+
+    def new(kind, **props):
+        n = nt.nodes.new(kind)
+        for k, v in props.items():
+            setattr(n, k, v)
+        return n
+
+    def ramp(source, lo, hi, out_lo, out_hi):
+        n = new('ShaderNodeMapRange')
+        for i, v in zip((1, 2, 3, 4), (lo, hi, out_lo, out_hi)):
+            n.inputs[i].default_value = v
+        link(source, n.inputs[0])
+        return n.outputs[0]
+
+    def noise(scale, detail=5.0):
+        n = new('ShaderNodeTexNoise')
+        n.inputs['Scale'].default_value, n.inputs['Detail'].default_value = scale, detail
+        link(where, n.inputs['Vector'])
+        return n.outputs['Fac']
+
+    def times(x, y):
+        n = new('ShaderNodeMath', operation='MULTIPLY')
+        link(x, n.inputs[0])
+        link(y, n.inputs[1])
+        return n.outputs[0]
+
+    def towards(amount, colour_socket, other):
+        n = new('ShaderNodeMixRGB')
+        link(amount, n.inputs[0])
+        link(colour_socket, n.inputs[1])
+        n.inputs[2].default_value = other
+        return n.outputs[0]
+
+    coords = new('ShaderNodeTexCoord')
+    coords.object = root
+    where = coords.outputs['Object']
+    c = new('ShaderNodeRGB').outputs[0]
+    c.default_value = linear(colour)
+    shade = new('ShaderNodeHueSaturation')  # no panel is one even colour
+    link(c, shade.inputs['Color'])
+    link(ramp(noise(1.1), 0.3, 0.7, 1 - vary, 1 + vary), shade.inputs['Value'])
+    c = shade.outputs[0]
+    facing = new('ShaderNodeSeparateXYZ')  # bleached where it faces the sky
+    link(new('ShaderNodeNewGeometry').outputs['Normal'], facing.inputs[0])
+    chalk = linear(tuple(v + (235 - v) * 0.45 for v in colour))
+    c = towards(times(ramp(facing.outputs['Z'], 0.2, 1.0, 0.0, fade), ramp(noise(2.3), 0.35, 0.7, 0.3, 1.0)), c, chalk)
+    height = new('ShaderNodeSeparateXYZ')  # dust from the road, thick low down
+    link(where, height.inputs[0])
+    dusty = times(ramp(height.outputs['Z'], 1.3, 0.3, 0.0, dust), ramp(noise(3.5, 8.0), 0.3, 0.75, 0.2, 1.0))
+    c = towards(dusty, c, linear((150, 128, 100)))
+    nook = new('ShaderNodeAmbientOcclusion', samples=4)  # dirt where parts meet
+    nook.inputs['Distance'].default_value = 0.14
+    c = towards(ramp(nook.outputs['AO'], 0.45, 0.95, grime, 0.0), c, (0.02, 0.018, 0.015, 1.0))
+    link(c, b.inputs['Base Color'])
+    dull = new('ShaderNodeMath', operation='MULTIPLY_ADD')  # dust takes the shine off
+    link(dusty, dull.inputs[0])
+    dull.inputs[1].default_value, dull.inputs[2].default_value = 0.35, rough
+    link(dull.outputs[0], b.inputs['Roughness'])
+    edge = new('ShaderNodeBevel', samples=4)  # no edge on a real car is a knife
+    edge.inputs['Radius'].default_value = 0.012
+    dents = new('ShaderNodeBump')
+    dents.inputs['Strength'].default_value = 0.05
+    link(noise(60.0, 2.0), dents.inputs['Height'])
+    link(edge.outputs[0], dents.inputs['Normal'])
+    link(dents.outputs[0], b.inputs['Normal'])
     return m
 
 
 def build(bag=False, plate=''):
     made = []
-    blue = paint('slate blue', (66, 92, 118), 0.6, coat=0.12)  # thirty years old: more chalk than shine
-    white = paint('white', (232, 232, 224), 0.5)
-    black = paint('black', (17, 17, 19), 0.55)
-    rubber = paint('rubber', (14, 14, 14), 0.9)
-    glass = paint('glass', (16, 22, 28), 0.04, coat=1.0)
-    chrome = paint('chrome', (225, 228, 230), 0.12, metal=1.0)
-    lens = paint('lens', (228, 232, 235), 0.08, coat=1.0, glow=0.15)
-    amber = paint('amber', (240, 130, 22), 0.2, coat=1.0, glow=0.12)
-    red = paint('red', (175, 22, 20), 0.2, coat=1.0, glow=0.1)
-    plate_front = paint('white plate', (240, 240, 232), 0.35)
-    plate_rear = paint('yellow plate', (246, 204, 24), 0.35)
+    root = bpy.data.objects.new('defender', None)  # everything hangs on this: turn it and the whole car turns
+    bpy.context.scene.collection.objects.link(root)
+    worn = lambda name, colour, rough, wear, **more: paint(name, colour, rough, wear=wear, root=root, **more)
+    # Wear is: dust from the road, dirt in the corners, bleaching by the sun, unevenness.
+    blue = worn('slate blue', (46, 74, 108), 0.6, (0.6, 0.75, 0.24, 0.09), coat=0.1)  # thirty years old: more chalk than shine
+    white = worn('white', (226, 226, 216), 0.55, (0.6, 0.8, 0.0, 0.05))
+    black = worn('black', (18, 18, 20), 0.6, (0.42, 0.3, 0.16, 0.08))
+    rubber = worn('rubber', (15, 15, 15), 0.9, (0.55, 0.2, 0.1, 0.1))
+    glass = worn('glass', (150, 170, 165), 0.03, (0.5, 0.5, 0.0, 0.03), clear=True)
+    chrome = paint('chrome', (225, 228, 230), 0.16, metal=1.0)
+    lens = worn('lens', (228, 232, 235), 0.1, (0.4, 0.5, 0.0, 0.03), coat=1.0, glow=0.1)
+    amber = worn('amber', (240, 130, 22), 0.2, (0.4, 0.5, 0.0, 0.03), coat=1.0, glow=0.08)
+    red = worn('red', (175, 22, 20), 0.2, (0.4, 0.5, 0.0, 0.03), coat=1.0, glow=0.06)
+    plate_front = worn('white plate', (240, 240, 232), 0.35, (0.6, 0.4, 0.0, 0.04))
+    plate_rear = worn('yellow plate', (246, 204, 24), 0.35, (0.6, 0.4, 0.0, 0.04))
     ink = paint('ink', (10, 10, 10), 0.6)
-    chequer = paint('chequer plate', (26, 26, 28), 0.38, metal=0.7)
-    canvas = paint('canvas', (150, 150, 146), 0.9)
-    steel = paint('steel', (70, 70, 72), 0.5, metal=0.8)
+    chequer = worn('chequer plate', (30, 30, 32), 0.42, (0.3, 0.5, 0.4, 0.1), metal=0.6)
+    canvas = worn('canvas', (150, 150, 146), 0.9, (0.2, 0.5, 0.3, 0.08))
+    steel = worn('steel', (70, 70, 72), 0.5, (0.8, 0.5, 0.0, 0.1), metal=0.8)
+    seat = paint('seat', (38, 38, 42), 0.85)
+    cover = paint('seat cover', (150, 34, 30), 0.85)
+    lining = paint('lining', (24, 24, 26), 0.9)
+    smoked = paint('smoked glass', (16, 22, 28), 0.05, coat=1.0)  # for glass with nothing behind it
 
     def add(name, bm, material, bevel=0.0):
         me = bpy.data.meshes.new(name)
@@ -172,23 +261,35 @@ def build(bag=False, plate=''):
             cut(flare, prism(f'flare cut {x0} {s}', arch(x0), (s * 0.5, s * 1.3), black))
             cut(flare, box(f'flare foot {x0} {s}', (x0 - 0.8, x0 + 0.8), (s * 0.5, s * 1.3), (0, 0.50), black))
     box('chassis', (REAR + 0.1, NOSE - 0.1), (-0.5, 0.5), (0.36, 0.56), black)
-    box('capping', (REAR - 0.004, BULKHEAD), (-BODY - 0.004, BODY + 0.004), (WAIST - 0.012, WAIST + 0.016), blue, 0.006)
+    capping = box('capping', (REAR - 0.004, BULKHEAD), (-BODY - 0.004, BODY + 0.004), (WAIST - 0.012, WAIST + 0.016), blue, 0.006)
 
     # ---- The cabin and the roof.
     lo = [(REAR, -CABIN, WAIST), (BULKHEAD, -CABIN, WAIST), (BULKHEAD, CABIN, WAIST), (REAR, CABIN, WAIST)]
     hi = [(REAR, -CABIN, GUTTER), (SCREEN(GUTTER), -CABIN, GUTTER), (SCREEN(GUTTER), CABIN, GUTTER), (REAR, CABIN, GUTTER)]
-    hexa('cabin', lo, hi, blue, 0.012)
+    cabin = hexa('cabin', lo, hi, blue, 0.012)
+    # The car is hollow, so that there is an inside to see through the glass.
+    inside = hexa('inside', [(REAR + 0.05, -CABIN + 0.04, 0.62), (0.74, -CABIN + 0.04, 0.62), (0.74, CABIN - 0.04, 0.62), (REAR + 0.05, CABIN - 0.04, 0.62)],
+                  [(REAR + 0.05, -CABIN + 0.04, GUTTER - 0.02), (SCREEN(GUTTER) - 0.04, -CABIN + 0.04, GUTTER - 0.02), (SCREEN(GUTTER) - 0.04, CABIN - 0.04, GUTTER - 0.02),
+                   (REAR + 0.05, CABIN - 0.04, GUTTER - 0.02)], lining)
+    for shell in (cabin, tub, capping):
+        cut(shell, inside)
+
+    def opening(name, cutter, rubber):
+        """A hole for a window, through the wall and through the rubber that will hold the glass."""
+        for ob in (cabin, rubber):
+            cut(ob, cutter)
     box('gutter', (REAR - 0.02, SCREEN(GUTTER) + 0.03), (-CABIN - 0.02, CABIN + 0.02), (GUTTER - 0.01, GUTTER + 0.03), white, 0.008)
     box('roof', (REAR - 0.005, SCREEN(GUTTER) + 0.01), (-CABIN, CABIN), (GUTTER + 0.02, ROOF), white, 0.06)
     for y in (-0.42, -0.14, 0.14, 0.42):  # the ribs pressed into the roof
         box(f'roof rib {y}', (REAR + 0.25, SCREEN(GUTTER) - 0.25), (y - 0.025, y + 0.025), (ROOF - 0.004, ROOF + 0.01), white, 0.006)
     for s in (-1, 1):  # the little windows in the curve of the roof
         for x0, x1 in ((-2.05, -1.25), (-1.05, -0.25)):
-            box(f'alpine light {s} {x0}', (x0, x1), (s * (CABIN - 0.012), s * (CABIN + 0.004)), (GUTTER + 0.05, ROOF - 0.075), glass, 0.004)
+            box(f'alpine light {s} {x0}', (x0, x1), (s * (CABIN - 0.012), s * (CABIN + 0.004)), (GUTTER + 0.05, ROOF - 0.075), smoked, 0.004)
 
     def pane(name, x, z, s):
         """A side window: black rubber round dark glass."""
-        box(name + ' rubber', (x[0] - 0.022, x[1] + 0.022), (s * (CABIN - 0.01), s * (CABIN + 0.003)), (z[0] - 0.022, z[1] + 0.022), rubber)
+        frame = box(name + ' rubber', (x[0] - 0.022, x[1] + 0.022), (s * (CABIN - 0.01), s * (CABIN + 0.003)), (z[0] - 0.022, z[1] + 0.022), rubber)
+        opening(name, box(name + ' hole', x, (s * (CABIN - 0.07), s * (CABIN + 0.05)), z, rubber), frame)
         box(name, x, (s * (CABIN - 0.01), s * (CABIN + 0.007)), z, glass)
 
     for s in (-1, 1):
@@ -218,8 +319,11 @@ def build(bag=False, plate=''):
     face = lambda z, out: SCREEN(z) + out
     for out, grow, m, name in ((0.003, 0.03, rubber, 'screen rubber'), (0.008, 0.0, glass, 'screen')):
         z0, z1, w = 1.29 - grow, 1.80 + grow, 0.70 + grow
-        hexa(name, [(face(z0, -0.02), -w, z0), (face(z0, out), -w, z0), (face(z0, out), w, z0), (face(z0, -0.02), w, z0)],
-             [(face(z1, -0.02), -w, z1), (face(z1, out), -w, z1), (face(z1, out), w, z1), (face(z1, -0.02), w, z1)], m)
+        pane_ = hexa(name, [(face(z0, -0.02), -w, z0), (face(z0, out), -w, z0), (face(z0, out), w, z0), (face(z0, -0.02), w, z0)],
+                     [(face(z1, -0.02), -w, z1), (face(z1, out), -w, z1), (face(z1, out), w, z1), (face(z1, -0.02), w, z1)], m)
+        if grow:
+            opening('screen', hexa('screen hole', [(face(1.29, -0.25), -0.70, 1.29), (face(1.29, 0.06), -0.70, 1.29), (face(1.29, 0.06), 0.70, 1.29), (face(1.29, -0.25), 0.70, 1.29)],
+                                   [(face(1.80, -0.25), -0.70, 1.80), (face(1.80, 0.06), -0.70, 1.80), (face(1.80, 0.06), 0.70, 1.80), (face(1.80, -0.25), 0.70, 1.80)], rubber), pane_)
     for y in (-0.33, 0.27):
         rod(f'wiper {y}', (face(1.29, 0.02), y, 1.29), (face(1.52, 0.02), y + 0.33, 1.52), 0.007, black, n=8)
     for y in (-0.36, 0.36):
@@ -251,7 +355,8 @@ def build(bag=False, plate=''):
         back(f'back door gap {y}', (y - 0.005, y + 0.005), (0.62, GUTTER - 0.02), ink, 0.0015)
     back('back door sill', (-0.50, 0.36), (0.615, 0.625), ink, 0.0015)
     for name, y in (('back door glass', (-0.36, 0.22)), ('back glass left', (0.44, 0.72)), ('back glass right', (-0.72, -0.58))):
-        back(name + ' rubber', (y[0] - 0.022, y[1] + 0.022), (1.30, 1.79), rubber, 0.003)
+        frame = back(name + ' rubber', (y[0] - 0.022, y[1] + 0.022), (1.30, 1.79), rubber, 0.003)
+        opening(name, box(name + ' hole', (REAR - 0.05, REAR + 0.09), y, (1.322, 1.768), rubber), frame)
         back(name, y, (1.322, 1.768), glass, 0.007)
     back('back door handle', (0.24, 0.32), (1.10, 1.16), black, 0.03, 0.006)
     for s in (-1, 1):
@@ -269,6 +374,30 @@ def build(bag=False, plate=''):
     box('back crossmember', (REAR - 0.03, REAR + 0.1), (-0.82, 0.82), (0.49, 0.62), black, 0.008)
     box('tow bar', (REAR - 0.10, REAR + 0.05), (-0.06, 0.06), (0.36, 0.52), steel, 0.006)
     rod('tow ball', (REAR - 0.07, 0, 0.52), (REAR - 0.07, 0, 0.57), 0.025, chrome)
+
+    # ---- Inside: seats, a wheel to steer with on the right, the boxes over the back wheels.
+    box('floor mat', (REAR + 0.05, 0.74), (-CABIN + 0.04, CABIN - 0.04), (0.60, 0.645), lining)
+    box('dashboard', (0.46, 0.76), (-CABIN + 0.04, CABIN - 0.04), (0.98, 1.235), lining, 0.02)
+    for s in (-1, 1):
+        box(f'front seat {s}', (-0.08, 0.40), (s * 0.14, s * 0.62), (0.80, 1.00), seat, 0.03)
+        hexa(f'front seat back {s}', [(-0.12, min(s * 0.14, s * 0.62), 0.98), (0.0, min(s * 0.14, s * 0.62), 0.98), (0.0, max(s * 0.14, s * 0.62), 0.98), (-0.12, max(s * 0.14, s * 0.62), 0.98)],
+             [(-0.22, min(s * 0.14, s * 0.62), 1.55), (-0.11, min(s * 0.14, s * 0.62), 1.55), (-0.11, max(s * 0.14, s * 0.62), 1.55), (-0.22, max(s * 0.14, s * 0.62), 1.55)], seat, 0.03)
+        box(f'front headrest {s}', (-0.25, -0.13), (min(s * 0.26, s * 0.50), max(s * 0.26, s * 0.50)), (1.58, 1.76), cover, 0.03)
+        for x0 in (-AXLE,):  # the wheel boxes, or one would look from the back seat straight at the tyre
+            box(f'wheel box top {s}', (x0 - 0.56, x0 + 0.56), (min(s * 0.54, s * 0.76), max(s * 0.54, s * 0.76)), (0.955, 0.99), lining)
+            for x in (x0 - 0.56, x0 + 0.54):
+                box(f'wheel box end {x} {s}', (x, x + 0.02), (min(s * 0.54, s * 0.76), max(s * 0.54, s * 0.76)), (0.60, 0.99), lining)
+    box('back seat', (-0.98, -0.52), (-0.66, 0.66), (0.80, 0.98), seat, 0.03)
+    box('back seat back', (-1.10, -0.98), (-0.66, 0.66), (0.96, 1.50), seat, 0.03)
+    for y in (-0.42, 0.0, 0.42):
+        box(f'back headrest {y}', (-1.12, -1.02), (y - 0.11, y + 0.11), (1.53, 1.70), seat, 0.03)
+    hub = Vector((0.47, -0.38, 1.24))
+    lean = Vector((0.9, 0, -0.44)).normalized()  # the column runs up and back to the driver
+    rim_ = [hub - lean * 0.14 + Matrix.Rotation(2 * math.pi * i / 16, 3, lean) @ Vector((0, 0.19, 0)) for i in range(17)]
+    tube('steering wheel', rim_, 0.014, lining)
+    rod('steering column', hub, hub - lean * 0.14, 0.02, lining, n=8)
+    for i in (0, 5, 11):
+        rod(f'steering spoke {i}', hub - lean * 0.14, rim_[i], 0.01, lining, n=6)
 
     # ---- Wheels: an all-terrain tyre with blocks on its shoulders, a white steel rim with a ring of holes.
     def wheel(name, centre, axis):
@@ -324,11 +453,14 @@ def build(bag=False, plate=''):
         box(f'awning strap {x}', (x, x + 0.04), (out - 0.02, out + 0.15), (top - 0.03, top + 0.075), black)
     if bag:
         box('roof bag', (-2.2, -0.75), (-0.6, 0.6), (top + 0.02, top + 0.34), paint('bag', (22, 22, 24), 0.7), 0.09)
-    return made
+    for ob in made:
+        ob.parent = root
+    return root, made
 
 
-def stage():
-    """Somewhere to stand the car: gravel underfoot, a clear sky, the sun over the right shoulder."""
+def stage(sun=250.0):
+    """The light of a deep place (deep/scene.py), so the car belongs there: the same sky, the same sun, the same
+    film. The sun stands at `sun` degrees clockwise from north, forty degrees up; on the map that is 250."""
     scene = bpy.context.scene
     for ob in list(bpy.data.objects):
         bpy.data.objects.remove(ob)
@@ -337,13 +469,25 @@ def stage():
     nt = world.node_tree
     sky = nt.nodes.new('ShaderNodeTexSky')
     sky.sky_type = 'MULTIPLE_SCATTERING'
-    sky.sun_elevation, sky.sun_rotation = math.radians(42), math.radians(205)
+    az, el = math.radians(sun), math.radians(40)
+    sky.sun_elevation, sky.sun_rotation = el, az
+    try:
+        sky.sun_disc = False
+    except Exception:  # noqa: BLE001
+        pass
     nt.links.new(sky.outputs[0], nt.nodes['Background'].inputs[0])
-    nt.nodes['Background'].inputs[1].default_value = 0.32
+    nt.nodes['Background'].inputs[1].default_value = 0.3
     scene.world = world
+    lamp = bpy.data.lights.new('sun', 'SUN')
+    lamp.energy, lamp.angle, lamp.color = 4.4, math.radians(1.6), (1.0, 0.95, 0.86)
+    so = bpy.data.objects.new('sun', lamp)
+    scene.collection.objects.link(so)
+    so.rotation_euler = Vector((math.sin(az) * math.cos(el), math.cos(az) * math.cos(el), math.sin(el))).to_track_quat('Z', 'Y').to_euler()
     scene.render.engine = 'CYCLES'
     cy = scene.cycles
-    cy.samples, cy.use_denoising = int(arg('samples', '64')), True
+    cy.samples, cy.use_adaptive_sampling, cy.adaptive_threshold = int(arg('samples', '96')), True, 0.02
+    cy.use_denoising, cy.denoiser = True, 'OPENIMAGEDENOISE'
+    cy.max_bounces, cy.diffuse_bounces, cy.glossy_bounces, cy.transmission_bounces = 8, 3, 4, 6  # glass wants more than a wall does
     cy.device = 'CPU'
     if arg('device', 'cpu') == 'gpu':
         prefs = bpy.context.preferences.addons['cycles'].preferences
@@ -353,40 +497,82 @@ def stage():
             d.use = True
         cy.device = 'GPU'
     scene.view_settings.view_transform = 'AgX'
-    scene.view_settings.look = 'AgX - Medium High Contrast'
-    scene.view_settings.exposure = -2.0  # a clear noon sky is far brighter than a camera lets in
+    try:
+        scene.view_settings.look = 'AgX - Medium High Contrast'
+    except Exception:  # noqa: BLE001
+        pass
+    scene.view_settings.exposure = 0.3
     return scene
 
 
-def ground():
+def ground(colour=(118, 112, 104)):
     me = bpy.data.meshes.new('ground')
     me.from_pydata([(-60, -60, 0), (60, -60, 0), (60, 60, 0), (-60, 60, 0)], [], [(0, 1, 2, 3)])
     ob = bpy.data.objects.new('ground', me)
-    ob.data.materials.append(paint('gravel', (150, 140, 124), 0.95))
+    ob.data.materials.append(paint('ground', colour, 0.95))
     bpy.context.scene.collection.objects.link(ob)
     return ob
 
 
-def camera(at, to, lens=50, ortho=None):
+def camera(at, to, lens=50):
     cam = bpy.data.cameras.new('camera')
     ob = bpy.data.objects.new('camera', cam)
     bpy.context.scene.collection.objects.link(ob)
     ob.location = at
     ob.rotation_euler = (Vector(to) - Vector(at)).to_track_quat('-Z', 'Y').to_euler()
     cam.lens, cam.clip_end = lens, 500
-    if ortho:
-        cam.type, cam.ortho_scale = 'ORTHO', ortho
     bpy.context.scene.camera = ob
     return ob
 
 
+def map_camera(look, metres, pixels):
+    """The map's own camera: thirty degrees down, no perspective, looking the way of one of the map's views. The
+    spot the car stands on comes out in the middle of the picture."""
+    scene = bpy.context.scene
+    cam = bpy.data.cameras.new('map camera')
+    ob = bpy.data.objects.new('map camera', cam)
+    scene.collection.objects.link(ob)
+    cam.type, cam.ortho_scale, cam.clip_end = 'ORTHO', metres, 500
+    ob.rotation_euler = (math.radians(60), 0, math.radians(-look))
+    ob.location = -(ob.rotation_euler.to_matrix() @ Vector((0, 0, -1))) * 60
+    scene.camera = ob
+    scene.render.resolution_x = scene.render.resolution_y = pixels
+    scene.render.film_transparent = True
+
+
+def heading(root, degrees):
+    """Point the car: degrees clockwise from north, as a compass has it. North is +y here and east +x."""
+    root.rotation_euler = (0, 0, math.radians(90 - degrees))
+
+
 def main():
+    from PIL import Image, ImageFilter
     out = arg('out', ROOT + '/out/models/defender')
     os.makedirs(out, exist_ok=True)
-    only = arg('only', '')
-    scene = stage()
-    car = build(bag=flag('bag'), plate=arg('plate', ''))
+    only, place = arg('only', ''), arg('place', '')
+    scene = stage(sun=250.0 if place or only == 'map' else 140.0)
+    root, car = build(bag=flag('bag'), plate=arg('plate', ''))
     floor = ground()
+    render = lambda path: (setattr(scene.render, 'filepath', path), bpy.ops.render.render(write_still=True))
+    if place:
+        # Stood in a deep place: rendered as the map sees it, at the sharpness of the deep tiles, with its shadow on
+        # a floor that shows nothing but shadow, and laid over the picture of the place.
+        floor.is_shadow_catcher = True
+        onto = Image.open(arg('onto', ROOT + '/out/deep/churchtown-45/picture.jpg')).convert('RGB')
+        per_metre = float(arg('scale', '32'))  # the picture of a deep place is kept at half the sharpness of its tiles
+        map_camera(45, 10.0, 640)
+        spots = [[float(v) for v in q.split(',')] for q in place.split('/')]
+        for i, (px, py, way) in enumerate(spots):
+            heading(root, way)
+            render(f'{out}/sprite-{i}.png')
+            sprite = Image.open(f'{out}/sprite-{i}.png')
+            size = round(10.0 * per_metre)
+            sprite = sprite.resize((size, size), Image.LANCZOS)
+            onto.paste(sprite, (round(px - size / 2), round(py - size / 2)), sprite)
+        onto.save(f'{out}/placed.png')
+        px, py = spots[0][:2]
+        onto.crop((int(px - 600), int(py - 400), int(px + 600), int(py + 400))).save(f'{out}/placed-close.png')
+        return
     # From where the photographs were taken: on the hill road in front, on the cliff at its right side, behind it in
     # the gorge, and the front quarter by the tent.
     views = {'front': ((6.4, 3.6, 1.75), (0.2, 0.1, 0.95), 50), 'side': ((0.9, -8.2, 3.3), (0.0, 0.0, 0.95), 50),
@@ -396,30 +582,18 @@ def main():
             continue
         scene.render.resolution_x, scene.render.resolution_y = 1500, 1000
         camera(at, to, lens)
-        scene.render.filepath = f'{out}/{name}.png'
-        bpy.ops.render.render(write_still=True)
+        render(f'{out}/{name}.png')
     if only and only != 'map':
         return
-    # As the map sees it: from above at thirty degrees, with no perspective, the car turned to eight headings. Its
-    # shadow falls on a floor that catches shadow and shows nothing else.
-    from PIL import Image
+    # As the map sees it, the car pointed to eight headings, with its shadow.
     floor.is_shadow_catcher = True
-    scene.render.film_transparent = True
-    scene.render.resolution_x = scene.render.resolution_y = 520
-    camera(Vector((-1, -1, math.tan(math.radians(30)) * math.sqrt(2))) * 30, (0, 0, 0.9), ortho=7.0)
-    pivot = bpy.data.objects.new('pivot', None)
-    scene.collection.objects.link(pivot)
-    for ob in car:
-        world = ob.matrix_world.copy()
-        ob.parent = pivot
-        ob.matrix_world = world
-    sheet = Image.new('RGB', (520 * 4, 520 * 2), (118, 134, 92))
+    map_camera(45, 8.0, 512)
+    sheet = Image.new('RGB', (512 * 4, 512 * 2), (96, 98, 100))
     for i in range(8):
-        pivot.rotation_euler = (0, 0, math.radians(45 * i))
-        scene.render.filepath = f'{out}/map-{i}.png'
-        bpy.ops.render.render(write_still=True)
-        tile = Image.open(scene.render.filepath)
-        sheet.paste(tile, (520 * (i % 4), 520 * (i // 4)), tile)
+        heading(root, 45 * i)
+        render(f'{out}/map-{i}.png')
+        tile = Image.open(f'{out}/map-{i}.png')
+        sheet.paste(tile, (512 * (i % 4), 512 * (i // 4)), tile)
     sheet.save(f'{out}/map.png')
 
 
