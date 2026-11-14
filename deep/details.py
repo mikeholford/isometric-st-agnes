@@ -1,6 +1,11 @@
 # The small things, all made up by rule: grass, flowers, stone hedges, gravestones round a church, paint on the road,
-# kerbs, lamps, parked cars, tubs by front doors, bins, aerials, gulls, washing, sheep. And the makers of things that
-# are put somewhere by hand in deep/scenes/: a phone box, a bench, a person, a car, the giant.
+# kerbs, lamps, tubs by front doors, bins, aerials, washing. And the makers of things that are put somewhere by hand
+# in deep/scenes/: a phone box, a bench, a person, a car, the giant.
+#
+# Nothing that moves is in the tiles: a deep place is a ghost town, and the viewer brings the life. A car frozen at
+# the kerb or a sheep that never lifts its head looks wrong beside traffic that drives. So the parked cars, the
+# sheep and the gulls are only put in with --movers, for a picture. Their rules still roll the dice either way, so
+# that every tub and bin stands where it stood before.
 # Run from scene.py, in its namespace.
 
 G = lambda x, y: float(ground(x, y))
@@ -321,7 +326,7 @@ class Street:
         return x - dy * (self.half + extra) * side, y + dx * (self.half + extra) * side, yaw, side
 
 
-# Cars parked on the side streets.
+# Cars parked on the side streets, in a picture with --movers only.
 parked = []
 for r_ in roads:
     if r_['hw'] not in ('residential', 'unclassified', 'service') or r_['kind'] != 'asphalt':
@@ -331,7 +336,9 @@ for r_ in roads:
         if rnd.random() < 0.55 and inside(px, py) and abs(px) < HALF - 4 and abs(py) < HALF - 4 and all(math.dist((px, py), q) > 6 for q in parked) \
                 and all(o is r_ or o['line'].distance(Point(px, py)) > o['half'] + 1.6 for o in roads):
             parked.append((px, py))
-            car(px, py, math.atan2(dy, dx) + (math.pi if rnd.random() < 0.3 else 0), rnd.choice(CARS))
+            yaw, paint = math.atan2(dy, dx) + (math.pi if rnd.random() < 0.3 else 0), rnd.choice(CARS)
+            if MOVERS:
+                car(px, py, yaw, paint)
 
 # ---- At every front door: tubs of flowers, and a lamp by the door. Bins at the side of the house.
 FLOWERS = [(0.9, 0.2, 0.3), (0.95, 0.5, 0.7), (0.6, 0.3, 0.8), (0.95, 0.85, 0.2), (0.95, 0.95, 0.95), (0.9, 0.4, 0.1)]
@@ -386,7 +393,7 @@ for (a, b_, floor, name, eaves), i in zip(FRONTS, range(999)):
             cyl(mt, (p[0], p[1], z + 0.75), 0.02, 1.5, (0.9, 0.9, 0.88), n=5)
             cyl(batch('matte'), (p[0], p[1], z + 1.95), 1.05, 0.4, (0.75, 0.1, 0.1) if k % 2 else (0.92, 0.88, 0.75), n=10, top=0.03)
 
-# ---- Sheep, where there is open grass a good way from any house or road, and the picture shows it.
+# ---- Sheep, where there is open grass a good way from any house or road, and the picture shows it. With --movers only.
 tx_, ty_ = to_block(t[:, 0], t[:, 1])
 clear = ndi.distance_transform_edt(~blocked) * 0.25  # metres to the nearest road or building
 spots = np.argwhere(clear[::8, ::8] > 24) * 2.0  # row, column in metres
@@ -407,15 +414,17 @@ if spots:
         c, s_ = math.cos(yaw), math.sin(yaw)
         lamb = 0.62 if rnd.random() < 0.25 else 1.0
         wool = tuple(v * rnd.uniform(0.9, 1.0) for v in (0.9, 0.88, 0.8))
-        blob(batch('wool', smooth=True), (x, y, z + 0.62 * lamb), (0.52 * lamb, 0.3 * lamb, 0.3 * lamb) if abs(c) > abs(s_) else (0.3 * lamb, 0.52 * lamb, 0.3 * lamb), wool, 0.12, len(flock))
         grazing = rnd.random() < 0.6
+        if not MOVERS:
+            continue
+        blob(batch('wool', smooth=True), (x, y, z + 0.62 * lamb), (0.52 * lamb, 0.3 * lamb, 0.3 * lamb) if abs(c) > abs(s_) else (0.3 * lamb, 0.52 * lamb, 0.3 * lamb), wool, 0.12, len(flock))
         blob(mt, (x + c * 0.55 * lamb, y + s_ * 0.55 * lamb, z + (0.3 if grazing else 0.8) * lamb), (0.13 * lamb, 0.11 * lamb, 0.12 * lamb), (0.12, 0.1, 0.09), 0, 1)
         for f in (-0.28, 0.28):
             for q in (-0.13, 0.13):
                 cyl(mt, (x + (c * f - s_ * q) * lamb, y + (s_ * f + c * q) * lamb, z), 0.035 * lamb, 0.42 * lamb, (0.12, 0.1, 0.09), n=5)
-print(len(flock), 'sheep')
+print(len(flock) if MOVERS else 0, 'sheep')
 
-# ---- Aerials on some chimneys, gulls on some ridges.
+# ---- Aerials on some chimneys. Gulls on some ridges, with --movers only.
 for x, y, z in CHIMNEYS:
     if rnd.random() < 0.45:
         cyl(mt, (x, y, z), 0.014, 1.5, (0.6, 0.6, 0.62), n=4)
@@ -425,6 +434,8 @@ for x, y, z in CHIMNEYS:
 for mid, axis_, top_, length in RIDGES:
     for k in range(rnd.choice([0, 0, 1, 1, 2, 3])):
         p = np.asarray(mid) + np.asarray(axis_) * rnd.uniform(-0.4, 0.4) * length
+        if not MOVERS:
+            continue
         blob(mt, (p[0], p[1], top_ + 0.1), (0.13, 0.09, 0.085), (0.95, 0.95, 0.93), 0, k)
         blob(mt, (p[0] - 0.03, p[1], top_ + 0.13), (0.12, 0.07, 0.05), (0.62, 0.64, 0.67), 0, k)
         blob(mt, (p[0] + 0.11, p[1], top_ + 0.19), (0.05, 0.045, 0.045), (0.96, 0.96, 0.94), 0, k)

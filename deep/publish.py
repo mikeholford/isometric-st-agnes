@@ -24,12 +24,16 @@ def main():
         if not (folder / "place.json").exists():
             continue
         place = json.loads((folder / "place.json").read_text())
-        base = f"{url.rstrip('/')}/{folder.name}/" if url else f"deep/{folder.name}/"
+        # In the site, the folder carries the time of the render in its name, as the map's own tiles do: a browser
+        # that still holds tiles of an older render then never mixes them with the new ones.
+        name = folder.name if url else f"{folder.name}-{int((folder / 'place.json').stat().st_mtime)}"
+        base = f"{url.rstrip('/')}/{name}/" if url else f"deep/{name}/"
+        if not url:
+            for old in (site / "deep").glob(f"{folder.name}*"):
+                shutil.rmtree(old, ignore_errors=True)
         for layer in ("tiles", "objects"):
             if not url:
-                target = site / "deep" / folder.name / place[layer]
-                shutil.rmtree(target, ignore_errors=True)
-                shutil.copytree(folder / place[layer], target)
+                shutil.copytree(folder / place[layer], site / "deep" / name / place[layer])
             place[layer] = base + place[layer]
         places.append(place)
     (site / "deep.json").write_text(json.dumps({"places": places}))

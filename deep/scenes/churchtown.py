@@ -1,5 +1,6 @@
-# Churchtown, by hand: what stands on the pavement by the parish church and who is about. With --movers, the giant
-# comes down the road and the traffic has stopped for him. All of it is made up. Spots are given in the map's local
+# Churchtown, by hand: what stands on the pavement by the parish church. The tiles hold only what stays put. With
+# --movers, for a picture, people are about, the giant comes down the road and the traffic has stopped for him.
+# All of it is made up. Spots are given in the map's local
 # metres (x east, z south) and along the road in metres from the junction with Trevaunance Road: less than nothing is
 # down Churchtown, more is on along Town Hill. Run from scene.py after details.py, in its namespace.
 
@@ -34,8 +35,9 @@ if road is not None and church is not None:
             cyl(mt, (x, y, G(x, y) + k * 0.36), 0.045, 0.36, (0.06, 0.06, 0.06) if k % 2 else (0.94, 0.94, 0.92), n=8)
         blob(batch('lamp'), (x, y, G(x, y) + 2.3), (0.16, 0.16, 0.16), (1.0, 0.55, 0.05), 0, 3)
 
-    # People on the pavement. On the map itself they stand talking in twos, since the map has walkers of its own;
-    # with the giant in the picture more of them are about, and those near him have stopped to look up.
+    # People on the pavement, in a picture with --movers only: the map has walkers of its own. Those near the giant
+    # have stopped to look up. Without --movers the dice are still rolled for the six who used to stand here, so
+    # that whatever is made after them comes out as it did.
     gx0, gy0, _ = street.at(-6.5)
     for i, off in enumerate((-44, -40.5, -39.8, -33, -26.5, -19, -18.2, -9, -6.5, 6, 9.5, 17, 24) if MOVERS else (-40.6, -39.8, -27.3, -26.5, 9.6, 10.4)):
         x, y, yaw, side = street.kerb(off, church, 0.45 + 0.5 * rnd.random())
@@ -44,7 +46,10 @@ if road is not None and church is not None:
         looking = MOVERS and math.dist((x, y), (gx0, gy0)) < 16
         face = math.atan2(gy0 - y, gx0 - x) if looking else yaw + (math.pi if i % 3 == 0 else 0) if MOVERS else yaw + (0 if i % 2 == 0 else math.pi)
         child = i == (2 if MOVERS else 1)
-        person(x, y, face, rnd.choice(COATS), rnd.choice(LEGS), rnd.choice(HAIR), size=0.72 if child else 1.0, stride=0.25 if MOVERS and not looking else 0.04)
+        coat, legs, hair = rnd.choice(COATS), rnd.choice(LEGS), rnd.choice(HAIR)
+        if not MOVERS:
+            continue
+        person(x, y, face, coat, legs, hair, size=0.72 if child else 1.0, stride=0.25 if MOVERS and not looking else 0.04)
         if child:  # with a red balloon
             cyl(mt, (x + 0.2, y, G(x, y) + 0.9), 0.004, 1.2, (0.9, 0.9, 0.9), n=4, axis=(0.1, 0.05, 1))
             blob(batch('gloss'), (x + 0.32, y + 0.06, G(x, y) + 2.25), (0.17, 0.17, 0.21), (0.85, 0.06, 0.08), 0, 9)

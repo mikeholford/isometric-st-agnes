@@ -7,7 +7,7 @@ tracer (Blender's Cycles) from where the map's own camera stands, so that the pi
 
 What is real: the shape of the land (lidar), where the buildings stand and how high they are, where the roads run
 (OpenStreetMap), where the trees stand and how big they are. What is made up, by rule: everything smaller than that.
-Windows, doors, chimneys, slates, walls, grass, flowers, gravestones, parked cars. deep/details.py holds the rules;
+Windows, doors, chimneys, slates, walls, grass, flowers, gravestones. deep/details.py holds the rules;
 deep/scenes/<place>.py holds what was put in one place by hand.
 
   uv run deep/scene.py churchtown             the place as tiles for the viewer, in out/deep/churchtown-45/
@@ -19,7 +19,8 @@ deep/scenes/<place>.py holds what was put in one place by hand.
   --samples 64    rays through every pixel: more is cleaner and slower
   --device auto   auto, cpu or gpu: a graphics card is used when there is one (Metal on a Mac)
   --sun az,el     where the sun stands; without it, where it stands on the map (scripts/sun.py)
-  --movers        with the giant and the traffic in the picture; the tiles never have them, the viewer draws its own
+  --movers        with everything that moves in the picture: people, parked cars, sheep, gulls, the traffic and the
+                  giant. The tiles never have them: the place is a ghost town, and the viewer draws the life itself
 
 A render that was cut short goes on where it stopped: every chunk of the picture is a file of its own.
 
