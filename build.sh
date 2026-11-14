@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Build the isometric map of St Agnes from open data, end to end.
-#   ./build.sh            fetch, preprocess, render at 4 px/m, cut Deep Zoom tiles into site/
-#   SCALE=3 ./build.sh    render at another resolution (update SCALE/WIDTH/HEIGHT in viewer/index.html to match)
+#   ./build.sh            fetch, preprocess, render at 8 px/m, cut Deep Zoom tiles into site/
+#   SCALE=4 ./build.sh    render at another resolution; the viewer reads it from map.json
+#   SS=1 ./build.sh       without supersampling: four times as fast, with jagged edges
+# Every tile is rendered SS times as large each way and averaged down (render/scene.js), so at the defaults the
+# renderer works at 16 px/m. That takes a graphics card with 4096 px render targets, which any recent one has.
 set -euo pipefail
 builtin cd "$(dirname "$0")"
-SCALE="${SCALE:-4}"
+SCALE="${SCALE:-8}"
+SS="${SS:-2}"
 
 (builtin cd scripts && uv run --quiet fetch.py)
 (builtin cd scripts && uv run --quiet build_terrain.py 2>&1 | grep -v GDAL_NODATA)
@@ -23,8 +27,8 @@ SCALE="${SCALE:-4}"
 # cars and walkers behind them.
 VIEWS=$(builtin cd scripts && python3 -c "from config import VIEWS; print(*VIEWS)")
 for look in $VIEWS; do
-  node render/run.mjs all --scale "$SCALE" --tile 2048 --kuwahara 2 --look "$look"
-  node render/run.mjs all --scale "$SCALE" --tile 2048 --pass objects --look "$look"
+  node render/run.mjs all --scale "$SCALE" --ss "$SS" --tile 2048 --kuwahara 2 --look "$look"
+  node render/run.mjs all --scale "$SCALE" --ss "$SS" --tile 2048 --pass objects --look "$look"
 done
 
 layout="out/tiles-$SCALE/layout.json"

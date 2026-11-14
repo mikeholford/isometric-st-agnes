@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-  /* Layout: the map fills the screen; small night-sky panels float in its corners, tilt-shift blur on the top and bottom edges. */
+  /* Layout: the map fills the screen and small night-sky panels float in its corners. */
   :root {
     --sky: #20242c;        /* the void around the diorama, same as the rendered tiles */
     --panel: #171a21eb;
@@ -36,9 +36,15 @@
   [hidden] { display: none !important; }
   html, body { height: 100%; margin: 0; }
   body { background: var(--sky); color: var(--fg); font: 14px/1.4 var(--body); overflow: hidden; }
-  #map { position: fixed; inset: 0; background: var(--sky); }
+  /* The map fades in once the first view has its tiles, so it never shows a coarse stage (see the veil below). */
+  #map { position: fixed; inset: 0; background: var(--sky); opacity: 0; transition: opacity 0.7s ease-out; }
+  body.ready #map { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { #map { transition: none; } }
 
-  /* Tilt-shift: stacked blur layers, each masked a little further from the edge, so the blur ramps up smoothly. */
+  /* The lens (see the script): depth of field and bloom, drawn over the sharp map from a small copy of the screen.
+     Without WebGL the blur comes from the stacked layers below instead, each masked a little further from the edge. */
+  #lens { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  body:not(.no-lens) .tilt { display: none; }
   .tilt { position: fixed; left: 0; right: 0; height: 34vh; pointer-events: none; z-index: 2; }
   .tilt.top { top: 0; }
   .tilt.bottom { bottom: 0; }
@@ -52,8 +58,9 @@
   .tilt.bottom span:nth-child(1) { -webkit-mask-image: linear-gradient(to top, #000 40%, transparent 100%); mask-image: linear-gradient(to top, #000 40%, transparent 100%); }
   .tilt.bottom span:nth-child(2) { -webkit-mask-image: linear-gradient(to top, #000 20%, transparent 70%); mask-image: linear-gradient(to top, #000 20%, transparent 70%); }
   .tilt.bottom span:nth-child(3) { -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 40%); mask-image: linear-gradient(to top, #000 0%, transparent 40%); }
-  /* A touch of extra color, as a miniature photographed up close. */
-  #map { filter: saturate(1.12) contrast(1.03); }
+  /* The grade: warm, with a touch of extra colour, as a miniature photographed up close. The script sets it for the
+     light of the hour (see the sky). */
+  #map { filter: var(--grade, sepia(0.1) saturate(1.3) contrast(1.05)); }
 
   .panel {
     position: fixed;
@@ -151,15 +158,17 @@
   }
   /* Turning the map: a still of the old view turns away over the new one, and the compass needle swings round
      (see rotateView). */
-  .ghost { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; image-rendering: pixelated; }
-  .ghost.glow { mix-blend-mode: screen; }
+  .ghost { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   #needle { transform-origin: 9px 9px; transition: transform 0.2s ease-out; }
   @media (prefers-reduced-motion: reduce) { #needle { transition: none; } }
   /* Cars, cyclists, walkers and birds (traffic.json), on a canvas between the map tiles and the overlays. */
   #traffic-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  /* Evening: the map and everything on it in moonlight; lamps and headlights glow on a layer above that. */
-  body.evening #map canvas:not(#light-layer):not(.glow), body.evening #minimap canvas { filter: url(#dusk); }
+  /* Dusk and night: the light map lies over the map and everything on it and is multiplied with it, dark blue where
+     the moon is the only light and warm where a lamp shines, so a lamp shows the road its own colours. The lamps and
+     headlights themselves glow on a layer above that. */
+  #light-map { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; mix-blend-mode: multiply; }
   #light-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; mix-blend-mode: screen; }
+  body.evening #minimap canvas { filter: url(#dusk); }
   /* Hover areas for named buildings and places (hotspots.json). */
   .hotspots { pointer-events: none; overflow: visible; }
   .hotspots polygon { fill: transparent; stroke: transparent; stroke-width: 2; vector-effect: non-scaling-stroke; transition: fill 0.12s; }
@@ -393,7 +402,7 @@
   <button type="button" id="zoom-home" aria-label="Back to the starting point">⌂</button>
   <button type="button" id="turn" aria-label="Turn the map a quarter" title="Turn (or hold ⌘ / Ctrl and drag)" hidden><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="7.2" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".45"/><g id="needle"><path d="M9 2.6l2.3 6.4H6.7z" fill="currentColor"/><path d="M9 15.4l2.3-6.4H6.7z" fill="currentColor" opacity=".35"/></g></svg></button>
   <button type="button" id="music" aria-label="Music on or off" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M6.6 13.2V4.3l8-1.8v9.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><ellipse cx="4.6" cy="13.3" rx="2.1" ry="1.7" fill="currentColor"/><ellipse cx="12.6" cy="11.8" rx="2.1" ry="1.7" fill="currentColor"/></svg></button>
-  <button type="button" id="evening" aria-label="Evening on or off" aria-pressed="false"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><mask id="moon-cut"><rect width="18" height="18" fill="#fff"/><circle cx="12.4" cy="6" r="5.2" fill="#000"/></mask><circle cx="8.6" cy="9.6" r="6.2" fill="currentColor" mask="url(#moon-cut)"/><circle cx="14.2" cy="12.4" r=".9" fill="currentColor" opacity=".7"/></svg></button>
+  <button type="button" id="evening" aria-label="Night or day" title="The light follows the real sun over St Agnes. Click for night or day." aria-pressed="false"><svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><mask id="moon-cut"><rect width="18" height="18" fill="#fff"/><circle cx="12.4" cy="6" r="5.2" fill="#000"/></mask><circle cx="8.6" cy="9.6" r="6.2" fill="currentColor" mask="url(#moon-cut)"/><circle cx="14.2" cy="12.4" r=".9" fill="currentColor" opacity=".7"/></svg></button>
 </div>
 
 <div id="readout" class="panel">
@@ -653,19 +662,22 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
 
   function updateZoom() {
-    const z = viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true));
-    // From one map pixel per screen pixel up, show the pixels as pixels. Counted in device pixels: on a HiDPI
-    // screen a map pixel already covers more than one device pixel from zoom 0.5, and smoothing that upscale blurs it.
-    viewer.drawer.setImageSmoothingEnabled(z * (window.devicePixelRatio || 1) < 1);
+    const z = viewer.viewport.viewportToImageZoom(viewer.viewport.getZoom(true)), cm = 100 / M.scale;
     const ratio = z >= 1 ? `${nl(z, 1)}×` : `1:${nl(1 / z, 1)}`;
-    scaleEl.textContent = `1 pixel = ${nl(100 / M.scale, 0)} cm · zoom ${ratio}`;
+    scaleEl.textContent = `1 pixel = ${nl(cm, Number.isInteger(cm) ? 0 : 1)} cm · zoom ${ratio}`;
   }
+
+  // Zoom levels in this file and in shared links are counted in pixels of a map at 4 px/m, as the first tiles were.
+  // A sharper map (map.json "scale") has more pixels to the metre, and zoomOf gives the zoom that shows the same
+  // stretch of land on it. INK is the same step for strokes: their widths were chosen in pixels of that first map.
+  const zoomOf = (z) => (z * 4) / M.scale;
+  let INK = 1;
 
   // The view the map opens on and the home button goes back to: the parish church in Churchtown, at 1:1.3. The point
   // is the middle of the church, 3 m up, so it sits in the middle whichever way the map is turned.
   function goHome(now) {
     const vp = viewer.viewport, { x, z } = gridToLocal(172029, 50735);
-    vp.zoomTo(vp.imageToViewportZoom(1 / 1.3), null, now);
+    vp.zoomTo(vp.imageToViewportZoom(zoomOf(1 / 1.3)), null, now);
     vp.panTo(vp.imageToViewportCoordinates(groundToImage(x, z, 3)), now);
   }
 
@@ -692,7 +704,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (pinAt) {
       const vp = viewer.viewport;
       q.set('pin', gridToWgs(...pinAt).map((v) => v.toFixed(5)).join(','));
-      q.set('zoom', String(+vp.viewportToImageZoom(vp.getZoom()).toFixed(2)));
+      q.set('zoom', String(+((vp.viewportToImageZoom(vp.getZoom()) * M.scale) / 4).toFixed(2)));
       if (VIEW.i) q.set('view', String(VIEW.look));
     }
     const search = q.toString().replace(/%2C/g, ',');
@@ -717,7 +729,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (Math.abs(x) > (M.area.xmax - M.area.xmin) / 2 || Math.abs(z) > (M.area.ymax - M.area.ymin) / 2) return false;
     const zoom = Math.min(6, Math.max(0.02, parseFloat(q.get('zoom')) || 1 / 1.3));
     const vp = viewer.viewport;
-    vp.zoomTo(vp.imageToViewportZoom(zoom), null, true);
+    vp.zoomTo(vp.imageToViewportZoom(zoomOf(zoom)), null, true);
     vp.panTo(vp.imageToViewportCoordinates(groundToImage(x, z, 0)), true);
     setPin(X, Y);
     return true;
@@ -728,7 +740,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   function flyTo(X, Y, h = 0, imageZoom = 0.7, mark = false, offsetPx = 0) {
     const { x, z } = gridToLocal(X, Y);
     const pt = viewer.viewport.imageToViewportCoordinates(groundToImage(x, z, h));
-    viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(imageZoom), null, false);
+    viewer.viewport.zoomTo(viewer.viewport.imageToViewportZoom(zoomOf(imageZoom)), null, false);
     const shift = viewer.viewport.deltaPointsFromPixels(new OpenSeadragon.Point(0, offsetPx), false);
     viewer.viewport.panTo(pt.plus(shift), false);
     if (marker) unanchor(marker);
@@ -743,14 +755,15 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // The tiles are WebP; OpenSeadragon 4 only needs to be told the browser can show them.
   OpenSeadragon.setImageFormatsSupported({ webp: true });
 
-  // A Deep Zoom pyramid of the map; every view and layer has the same size.
+  // A Deep Zoom pyramid of the map; every view and layer has the same size. map.json says how its tiles were cut
+  // (site.sh); the first tiles were 1024 pixels a side with no overlap.
   const dzi = (Url) => ({
     Image: {
       xmlns: 'http://schemas.microsoft.com/deepzoom/2008',
       Url,
       Format: 'webp',
-      Overlap: '0',
-      TileSize: '1024',
+      Overlap: String(M.overlap ?? 0),
+      TileSize: String(M.tileSize ?? 1024),
       Size: { Width: String(M.width), Height: String(M.height) },
     },
   });
@@ -759,6 +772,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     M = map;
     M.area.hx ??= (M.area.xmax - M.area.xmin) / 2;
     M.area.hz ??= (M.area.ymax - M.area.ymin) / 2;
+    INK = M.scale / 4;
     await loadHeights();
     // A link may ask for another direction (?view=135); the map opens with that view's tiles.
     const want = new URLSearchParams(location.search).get('view');
@@ -780,13 +794,16 @@ Work step by step, check the licences of the data you use, and ask me about the 
       navigatorBorderColor: '#d2b47a',
       navigatorDisplayRegionColor: '#d2b47a',
       navigatorOpacity: 1,
-      maxZoomPixelRatio: 6,
+      maxZoomPixelRatio: 24 / M.scale, // as close as 24 screen pixels to the metre, whatever the tiles hold
       minZoomImageRatio: 0.8,
       visibilityRatio: 0.6,
       animationTime: 0.9,
       springStiffness: 9,
       zoomPerScroll: 1.4,
+      // Always smooth, never blocks: a tile that is still coarse shows soft, and the sharp one fades in over it.
       imageSmoothingEnabled: true,
+      blendTime: 0.3,
+      maxTilesPerFrame: 4,
       gestureSettingsMouse: { clickToZoom: false, dblClickToZoom: true },
       preserveImageSizeOnResize: true,
     });
@@ -796,7 +813,9 @@ Work step by step, check the licences of the data you use, and ask me about the 
       const p = viewer.viewport.viewportToImageCoordinates(viewer.viewport.getCenter());
       showPoint(p.x, p.y);
       openFromHash();
-      if (lanes.length) layerObjects();
+      makeLayers();
+      layerObjects();
+      unveil();
     });
     viewer.addHandler('animation', updateZoom);
     new OpenSeadragon.MouseTracker({
@@ -1067,7 +1086,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const id = ++flight;
     const vp = viewer.viewport;
     springTime(SPRING_SLOW);
-    if (imageZoom != null) vp.zoomTo(vp.imageToViewportZoom(imageZoom), null, false);
+    if (imageZoom != null) vp.zoomTo(vp.imageToViewportZoom(zoomOf(imageZoom)), null, false);
     vp.panTo(target.plus(vp.deltaPointsFromPixels(new OpenSeadragon.Point(0, card.offsetHeight / 2 + 12), false)), false);
     viewer.addOnceHandler('animation-finish', () => { if (id === flight) springTime(SPRING_FAST); });
   }
@@ -1319,11 +1338,10 @@ Work step by step, check the licences of the data you use, and ask me about the 
 
   // Life on the map: cars, cyclists and walkers, some with a dog, on the roads and paths (traffic.json,
   // scripts/build_traffic.py), and birds overhead. All are small boxes and strokes drawn in the render's projection and
-  // lit by its sun (render/scene.js). Behind a building they disappear; under tree crowns they show faintly, as if seen
-  // through the leaves. Zoomed in, they are drawn at map-pixel size and
-  // scaled up, so they look like the rest of the map.
-  const SUN = [-0.72, 0.643, 0.262]; // toward the sun: azimuth 250°, elevation 40°
-  const SHADOW = [-SUN[0] / SUN[1], -SUN[2] / SUN[1]]; // ground shift per meter of height
+  // lit by the sun of the hour (see the sky below). Behind a building they disappear; under tree crowns they show
+  // faintly, as if seen through the leaves. They are drawn at the sharpness of the screen, whatever the zoom.
+  let SUN = [-0.72, 0.643, 0.262]; // toward the sun; the render's own (azimuth 250°, elevation 40°) until the sky is read
+  let SHADOW = [-SUN[0] / SUN[1], -SUN[2] / SUN[1]]; // ground shift per metre of height
   const PAINT = [[236, 236, 230, 20], [176, 180, 184, 15], [120, 124, 130, 18], [46, 48, 54, 17], [44, 62, 104, 8],
     [58, 100, 164, 8], [170, 40, 36, 7], [112, 32, 36, 2], [54, 94, 66, 2], [198, 182, 150, 2], [226, 182, 44, 1]];
   const JACKETS = [[196, 52, 42, 3], [44, 92, 172, 3], [232, 192, 52, 2], [40, 42, 48, 4], [62, 132, 84, 2], [236, 236, 230, 2],
@@ -1344,8 +1362,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
     truck: { half: 7.6, sort: true, boxes: [[-7.4, 7.4, 1.2, 0.45, 1.05, 'dark'], [-7.4, 5.0, 1.25, 1.05, 3.9, 'load'], [5.3, 7.6, 1.22, 0.55, 3.15, 'cab']] },
     bike: { half: 0.9, bike: true, boxes: [[-0.85, 0.85, 0.05, 0.3, 0.75, 'dark'], [-0.32, 0.14, 0.2, 0.8, 1.42, 'body'], [-0.12, 0.08, 0.1, 1.42, 1.66, 'load']] },
   };
-  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, GIANT = 4, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
-  let lanes = [], movers = [], layer = null, off = null;
+  const CAR = 0, BIKE = 1, WALK = 2, SWIM = 3, GIANT = 4, SHADE = 5, WEIGHT = ['w', 'wb', 'ww'], DENSITY = ['d', 'db', 'dw'], SIDE = [null, 'bo', 'wo'];
+  let lanes = [], movers = [], layer = null;
   const outs = new Map(), entries = { car: {}, bike: [], walk: [] };
   let exits = new Set();
 
@@ -1379,14 +1397,22 @@ Work step by step, check the licences of the data you use, and ask me about the 
     });
     for (let i = 0; i < 3; i++) spawnFlock(0.2 + Math.random() * 0.6);
     openBolsterLink();
-    layerObjects();
-    layer = document.createElement('canvas');
-    layer.id = 'traffic-layer';
-    viewer.drawer.canvas.after(layer);
-    lights = document.createElement('canvas');
-    lights.id = 'light-layer';
-    layer.after(lights);
-    off = document.createElement('canvas');
+  }
+
+  // The layers over the tiles, from the bottom up: the traffic, the light map that is multiplied with all below it,
+  // the glow of lamps and headlights, and the lens. Made once the map is open; from then on every frame is drawn.
+  function makeLayers() {
+    if (layer) return;
+    const add = (id, after) => {
+      const c = document.createElement('canvas');
+      c.id = id;
+      after.after(c);
+      return c;
+    };
+    layer = add('traffic-layer', viewer.drawer.canvas);
+    lightMap = add('light-map', layer);
+    lights = add('light-layer', lightMap);
+    makeLens(lights);
     requestAnimationFrame(frame);
   }
 
@@ -1587,8 +1613,10 @@ Work step by step, check the licences of the data you use, and ask me about the 
     ctx.fill();
   }
 
-  const shade = (rgb, nx, ny, nz) => {
-    const k = Math.min(1.05, 0.5 + 0.62 * Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2]));
+  // A face in the light of the hour: the sky lights every face a little, the sun those turned toward it. With the sun
+  // down the faces keep an even tone, and the light map over them brings the night.
+  const shade = (rgb, nx, ny, nz, glow = 0) => {
+    const k = Math.min(1.05, 0.5 + 0.2 * (1 - LIGHT.sun) + 0.62 * LIGHT.sun * Math.max(0, nx * SUN[0] + ny * SUN[1] + nz * SUN[2])) + glow;
     return `rgb(${Math.round(rgb[0] * k)},${Math.round(rgb[1] * k)},${Math.round(rgb[2] * k)})`;
   };
 
@@ -1610,10 +1638,10 @@ Work step by step, check the licences of the data you use, and ask me about the 
       ground.push(toPx(gx, gz, 0), toPx(gx + SHADOW[0] * b.h1, gz + SHADOW[1] * b.h1, 0));
       all.push(toPx(gx, gz, b.h0), toPx(gx, gz, b.h1));
     }
-    poly(ctx, hull(ground), 'rgba(16,20,30,0.28)');
+    poly(ctx, hull(ground), `rgba(16,20,30,${(0.08 + 0.2 * LIGHT.sun).toFixed(3)})`);
     if (outline) {
       path(ctx, hull(all));
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = 1.2 * INK;
       ctx.strokeStyle = 'rgba(18,20,26,0.6)';
       ctx.stroke();
     }
@@ -1634,7 +1662,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
   function drawMover(ctx, m, x, z, dx, dz) {
     if (m.mode === WALK) return drawWalker(ctx, m, x, z, dx, dz);
     if (m.mode === SWIM) return drawDippers(ctx, m);
-    if (m.mode === GIANT) return drawBolster(ctx, m, x, z, dx, dz);
+    if (m.mode === GIANT) return drawBolster(ctx, m);
+    if (m.mode === SHADE) return drawBolsterShadow(ctx, m.of);
     const V = VEHICLES[m.type];
     drawBoxes(ctx, x, z, dx, dz, V.boxes, (role) => (role === 'dark' ? DARK : role === 'load' ? m.load : m.paint), { sort: V.sort, outline: !V.bike });
   }
@@ -1679,8 +1708,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
       const [a, b] = lead;
       ctx.beginPath();
       ctx.moveTo(a[0], a[1]);
-      ctx.quadraticCurveTo((a[0] + b[0]) / 2, Math.max(a[1], b[1]) + 1.5, b[0], b[1]);
-      ctx.lineWidth = 0.6;
+      ctx.quadraticCurveTo((a[0] + b[0]) / 2, Math.max(a[1], b[1]) + 1.5 * INK, b[0], b[1]);
+      ctx.lineWidth = 0.6 * INK;
       ctx.strokeStyle = 'rgba(30,26,22,0.85)';
       ctx.stroke();
     }
@@ -1701,7 +1730,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const [cx, cy] = toPx(x, z, 0), w = r * M.scale;
     ctx.beginPath();
     ctx.ellipse(cx, cy, w, w / 2, 0, 0, Math.PI * 2);
-    ctx.lineWidth = 0.8;
+    ctx.lineWidth = 0.8 * INK;
     ctx.strokeStyle = `rgba(214,232,244,${alpha})`;
     ctx.stroke();
   }
@@ -1729,7 +1758,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // has a number (minutes since 1970 divided by twenty), and that number seeds the dice that pick the road or path
   // he starts on and every turn he takes. So the time of a find is proof of the place, and a link with the time in
   // it shows anyone where he was. Click him and he is gone for you until his next leg starts somewhere else.
-  const LEG = 20 * 60, STRIDE = 1.9, TALL = 6.4; // seconds, metres a second, metres
+  const LEG = 20 * 60, STRIDE = 1.9, TALL = 6.4; // seconds, metres a second on level ground, metres
   const dice = (seed) => () => { // mulberry32: the same numbers in every browser
     let t = (seed += 0x6d2b79f5);
     t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -1743,7 +1772,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
     walkable ||= lanes.map((l, i) => i).filter((i) => lanes[i].ww > 0 && lanes[i].len > 5);
     const rnd = dice(n), route = [], cum = [0];
     let li = walkable[Math.floor(rnd() * walkable.length)];
-    while (cum[cum.length - 1] < LEG * STRIDE + 50 && route.length < 2000) {
+    // A quarter more road than twenty minutes on the level take: down a gentle slope he covers more ground.
+    while (cum[cum.length - 1] < LEG * STRIDE * 1.25 + 50 && route.length < 2000) {
       route.push(li);
       cum.push(cum[cum.length - 1] + lanes[li].len);
       const l = lanes[li], all = (outs.get(l.b) || []).filter((j) => lanes[j].ww > 0);
@@ -1753,20 +1783,88 @@ Work step by step, check the licences of the data you use, and ask me about the 
       else li = from[Math.floor(rnd() * from.length)];
     }
     if (legs.size > 8) legs.clear();
-    legs.set(n, { route, cum });
+    legs.set(n, { n, route, cum, feet: null, prints: new Map() });
     return legs.get(n);
   }
-  // Where he is at a time (seconds since 1970), or null before the roads are loaded.
+  // The spot s metres along a lane, and the way the lane runs there.
+  function onLane(l, s) {
+    let i = 0, j = l.cum.length - 2;
+    while (i < j) {
+      const mid = (i + j + 1) >> 1;
+      if (l.cum[mid] <= s) i = mid; else j = mid - 1;
+    }
+    const p = l.p[i], q = l.p[i + 1], seg = l.cum[i + 1] - l.cum[i] || 1, f = (s - l.cum[i]) / seg;
+    return { x: p[0] + (q[0] - p[0]) * f, z: p[1] + (q[1] - p[1]) * f, dx: (q[0] - p[0]) / seg, dz: (q[1] - p[1]) / seg };
+  }
+  // The spot d metres along the route of a leg: the lane, how far along it, the place and the way the route runs.
+  // A lane does not always end just where the next one begins, so he crosses a junction in a straight line, from
+  // two and a half metres before it to as far after it. Only where the route leaves the map and comes in elsewhere
+  // is he gone from one spot and at the other.
+  function routeAt(leg, d) {
+    const { route, cum } = leg;
+    let lo = 0, hi = route.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (cum[mid] <= d) lo = mid; else hi = mid - 1;
+    }
+    const l = lanes[route[lo]], s = Math.min(l.len, Math.max(0, d - cum[lo]));
+    const early = s < l.len / 2, o = lanes[route[early ? lo - 1 : lo + 1]];
+    if (o) {
+      const r = Math.min(2.5, l.len / 2, o.len / 2), edge = early ? s : l.len - s;
+      const [from, to] = early ? [o, l] : [l, o], end = from.p[from.p.length - 1], start = to.p[0];
+      if (edge < r && Math.hypot(start[0] - end[0], start[1] - end[1]) < 30) {
+        const a = onLane(from, from.len - r), c = onLane(to, r), f = early ? (r + s) / (2 * r) : (r - edge) / (2 * r);
+        const len = Math.hypot(c.x - a.x, c.z - a.z) || 1;
+        return { lane: l, s, x: a.x + (c.x - a.x) * f, z: a.z + (c.z - a.z) * f, dx: (c.x - a.x) / len, dz: (c.z - a.z) / len };
+      }
+    }
+    return { lane: l, s, ...onLane(l, s) };
+  }
+  // The way he faces d metres along: across a few metres of route, so he turns a corner and does not snap round it.
+  function headingAt(leg, d, reach = 1.6) {
+    const p = routeAt(leg, d - reach), q = routeAt(leg, d + reach), len = Math.hypot(q.x - p.x, q.z - p.z);
+    return len > 0.05 ? [(q.x - p.x) / len, (q.z - p.z) / len] : [q.dx, q.dz];
+  }
+  // How steep the route is d metres along: metres up for every metre on, over the ten metres around him.
+  function slopeAt(leg, d) {
+    const p = routeAt(leg, d - 5), q = routeAt(leg, d + 5);
+    return (heightAt(q.x, q.z) - heightAt(p.x, p.z)) / Math.max(1, Math.hypot(q.x - p.x, q.z - p.z));
+  }
+
+  // His walk. A leg swings like a pendulum of its own length: there and back takes 2π√(L/g), so one step, a single
+  // swing, takes half of that. His hip is 3.4 m up, which makes a step of 1.85 s: slow and heavy. At 1.9 m/s on
+  // level ground each step is 3.5 m long. The beat never changes; what changes with the land is the length of the
+  // step. Uphill he takes shorter steps, on a gentle fall slightly longer ones, and down a steep slope he brakes
+  // and they shorten again: Tobler's rule for walkers (1993), exp(-3.5 |slope + 0.05|), set to 1 on the level.
+  //
+  // So where his feet come down follows from the leg alone: every footfall of the twenty minutes is laid out along
+  // the route before he takes the first, and a foot on the ground stays on its spot until it is lifted. The time in
+  // a link still gives the place: the step he is in and how far into it.
+  const HIP = 0.53 * TALL, ANKLE = 0.25, SHANK = (HIP - ANKLE) * 0.505; // hip joint and ankle above the ground, thigh and shin
+  const STEP_TIME = Math.PI * Math.sqrt(HIP / 9.81), STEP = STRIDE * STEP_TIME;
+  const pace = (slope) => Math.min(1.2, Math.max(0.35, Math.exp(-3.5 * Math.abs(slope + 0.05) + 0.175)));
+  // Until this leg he kept one pace up hill and down dale. Legs before it still do, so a link to an older find
+  // shows the same spot as on the day. When this goes live, set it to the leg of that hour: Math.floor(Date.now() / 1200000).
+  const HILLS_FROM = 1495512; // 14 November 2026, 00:00 UTC
+  // feet[j] is how far along the route footfall j - 1 lands: he starts with one foot half a step behind him.
+  function footfalls(leg) {
+    if (leg.feet) return leg.feet;
+    const hills = leg.n >= HILLS_FROM, count = Math.ceil(LEG / STEP_TIME) + 4, feet = new Float64Array(count);
+    const first = STEP * (hills ? pace(slopeAt(leg, 0)) : 1);
+    feet[0] = -first / 2, feet[1] = first / 2;
+    for (let j = 2; j < count; j++) feet[j] = feet[j - 1] + STEP * (hills ? pace(slopeAt(leg, feet[j - 1])) : 1);
+    return (leg.feet = feet);
+  }
+  // Where he is at a time (seconds since 1970), or null before the roads are loaded. In step k his weight is on
+  // footfall k, and he moves from halfway between the last two footfalls to halfway between the next two: a little
+  // faster as a foot lands and slower as he rises over it, as a body does that vaults over a stiff leg.
   function bolsterAt(t) {
     if (!lanes.length) return null;
-    const n = Math.floor(t / LEG), since = t - n * LEG, { route, cum } = bolsterLeg(n), d = since * STRIDE;
-    let k = 0;
-    while (k < route.length - 1 && cum[k + 1] < d) k++;
-    const l = lanes[route[k]], s = Math.min(l.len, d - cum[k]);
-    let i = 0;
-    while (i < l.cum.length - 2 && l.cum[i + 1] < s) i++;
-    const a = l.p[i], b = l.p[i + 1], seg = l.cum[i + 1] - l.cum[i] || 1, f = (s - l.cum[i]) / seg;
-    return { n, since, lane: l, s, x: a[0] + (b[0] - a[0]) * f, z: a[1] + (b[1] - a[1]) * f, dx: (b[0] - a[0]) / seg, dz: (b[1] - a[1]) / seg };
+    const n = Math.floor(t / LEG), since = t - n * LEG, leg = bolsterLeg(n), feet = footfalls(leg);
+    const k = Math.min(feet.length - 3, Math.floor(since / STEP_TIME)), ph = since / STEP_TIME - k;
+    const from = (feet[k] + feet[k + 1]) / 2, to = (feet[k + 1] + feet[k + 2]) / 2;
+    const d = from + (to - from) * (ph + (0.15 * Math.sin(2 * Math.PI * ph)) / (2 * Math.PI));
+    return { n, since, leg, feet, k, ph, d, ...routeAt(leg, d) };
   }
   const bolsterEl = document.getElementById('bolster');
   const unix = () => Date.now() / 1000;
@@ -1862,29 +1960,187 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // George Cruikshank's drawing in Hunt's book a belted, long-sleeved tunic to the knee and bare lower legs. No
   // club: none is told of or drawn. The straw beard and the leaves in his hair nod to the giant of the village's
   // Bolster Festival. Nearly four times a walker.
-  const TUNIC = [136, 98, 58], BELT = [58, 44, 34], FLESH = [214, 170, 136], MANE = [92, 58, 36], STRAW = [216, 188, 122], LEAF = [78, 122, 54], STEEL = [176, 182, 188], EYE = [40, 34, 30];
-  function drawBolster(ctx, g, x, z, dx, dz) {
-    const K = TALL / 1.72, stride = (g.since * STRIDE) / (0.75 * K) * Math.PI;
-    const sw = Math.sin(stride) * 0.2, arm = Math.sin(stride) * 0.16, bob = Math.abs(Math.cos(stride)) * 0.03;
-    const boxes = [
-      [sw - 0.1, sw + 0.1, 0.085, 0, 0.52, FLESH, -0.14],
-      [-sw - 0.1, -sw + 0.1, 0.085, 0, 0.52, FLESH, 0.14],
-      [-0.18, 0.18, 0.28, 0.46 + bob, 1.3 + bob, TUNIC],
-      [-0.19, 0.19, 0.29, 0.8 + bob, 0.87 + bob, BELT],
-      [0.19, 0.215, 0.03, 0.6 + bob, 0.84 + bob, STEEL, 0.17],
-      [-arm - 0.08, -arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, -0.36],
-      [-arm - 0.07, -arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, -0.36],
-      [arm - 0.08, arm + 0.08, 0.075, 0.68 + bob, 0.86 + bob, FLESH, 0.36],
-      [arm - 0.07, arm + 0.07, 0.065, 0.86 + bob, 1.27 + bob, TUNIC, 0.36],
-      [-0.14, 0.14, 0.15, 1.3 + bob, 1.6 + bob, FLESH],
-      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, -0.07],
-      [0.14, 0.152, 0.035, 1.47 + bob, 1.52 + bob, EYE, 0.07],
-      [0.07, 0.2, 0.14, 1.17 + bob, 1.42 + bob, STRAW],
-      [-0.2, -0.12, 0.16, 1.24 + bob, 1.58 + bob, MANE],
-      [-0.18, 0.1, 0.17, 1.56 + bob, 1.72 + bob, MANE],
-      [-0.19, 0.115, 0.18, 1.58 + bob, 1.63 + bob, LEAF],
-    ].map(([a, b, w, h0, h1, c, right = 0]) => [a * K, b * K, w * K, h0 * K, h1 * K, c, right * K]);
-    drawBoxes(ctx, x, z, dx, dz, boxes, () => TUNIC, { sort: true, outline: true });
+  //
+  // He is a jointed figure of blocks, like a wooden model. Points are [east, up, south] in metres, up counted from
+  // the same level as the heights of the land.
+  const TUNIC = [136, 98, 58], BELT = [58, 44, 34], FLESH = [214, 170, 136], MANE = [92, 58, 36], STRAW = [216, 188, 122], LEAF = [78, 122, 54], STEEL = [176, 182, 188], EYE = [40, 34, 30], IRON = [46, 42, 40], FLAME = [255, 222, 150];
+  const plus = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const unit = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+  const UP = [0, 1, 0];
+  // A point in the round to map pixels, and the way the camera looks.
+  const flat = (p) => [(p[0] * VIEW.c + p[2] * VIEW.s) * M.scale + M.width / 2, (M.top - ((p[0] * VIEW.s - p[2] * VIEW.c) / 2 + p[1] * COS30)) * M.scale];
+  const sight = () => [COS30 * VIEW.s, -0.5, -COS30 * VIEW.c];
+  // A block: eight corners, four below and four above, from an origin and three directions. f runs forward, r to
+  // the right, h up; front and back at the top may differ from those at the bottom (a hem pushed out by a knee).
+  // `over` draws it after its neighbours at the same depth (a belt over a tunic).
+  function block(o, F, R, U, [f0, f1], [r0, r1], [h0, h1], rgb, over = 0, [g0, g1] = [f0, f1]) {
+    const at = (f, r, h) => plus(plus(plus(o, F, f), R, r), U, h);
+    return { rgb, over, c: [at(f0, r0, h0), at(f1, r0, h0), at(f1, r1, h0), at(f0, r1, h0), at(g0, r0, h1), at(g1, r0, h1), at(g1, r1, h1), at(g0, r1, h1)] };
+  }
+  // A limb from one joint to the next: w wide across the body, d deep.
+  function limb(a, b, R, w, d, rgb, over = 0) {
+    const U = unit(plus(b, a, -1)), F = unit(cross(R, U)), len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    return block(a, F, unit(cross(U, F)), U, [-d, d], [-w, w], [0, len], rgb, over);
+  }
+  const FACES = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]];
+
+  // His pose at this instant: every block of him, the feet first.
+  function bolsterBody(g) {
+    if (g.body) return g.body;
+    const { leg, feet, k, ph } = g, out = [];
+    const [hx, hz] = headingAt(leg, g.d), F = [hx, 0, hz], R = [-hz, 0, hx];
+    const slope = slopeAt(leg, g.d), step = feet[k + 2] - feet[k + 1];
+    // A footfall: the ball of the foot, left and right of the route by turns, on the ground as it lies there.
+    const print = (j) => {
+      if (!leg.prints.has(j)) {
+        const at = routeAt(leg, feet[j]), [fx, fz] = headingAt(leg, feet[j]), side = j % 2 ? -1 : 1;
+        const x = at.x - fz * side * 0.44, z = at.z + fx * side * 0.44;
+        const tilt = Math.atan2(heightAt(x + fx * 0.4, z + fz * 0.4) - heightAt(x - fx * 0.6, z - fz * 0.6), 1);
+        leg.prints.set(j, { p: [x, heightAt(x, z), z], f: [fx, fz], tilt, side });
+      }
+      return leg.prints.get(j);
+    };
+    const down = print(k + 1), last = print(k), next = print(k + 2);
+    // The foot in the air: it stays down for the first seventh of the step, while the weight comes over, then
+    // swings through to its next place, slow at both ends and quickest in the middle, as a pendulum does.
+    const u = Math.min(1, Math.max(0, (ph - 0.14) / 0.86)), go = (1 - Math.cos(Math.PI * u)) / 2;
+    const air = plus(last.p, plus(next.p, last.p, -1), go);
+    air[1] = Math.max(air[1], heightAt(air[0], air[2])) + 0.42 * Math.sin(Math.PI * u) ** 1.3;
+    const swing = {
+      p: air, side: last.side,
+      f: unit([last.f[0] + (next.f[0] - last.f[0]) * go, 0, last.f[1] + (next.f[1] - last.f[1]) * go]),
+      // The heel comes up before the foot leaves the ground; in the air the toes point down, then up to land.
+      tilt: u > 0 ? last.tilt + (next.tilt - last.tilt) * go + Math.sin(Math.PI * u) * (0.5 * u - 0.55 * (1 - u)) - 0.35 * (1 - u) ** 3 : last.tilt - 0.35 * (ph / 0.14),
+    };
+    const stance = { p: down.p, side: down.side, f: [down.f[0], 0, down.f[1]], tilt: down.tilt };
+    // The hips: over the route, swaying toward the foot that bears the weight, lowest with both feet down and
+    // highest over the standing leg. Four fifths of the drop a stiff leg would give; the knees take the rest.
+    const reach = HIP - ANKLE, drop = 0.8 * (reach - Math.sqrt(Math.max(0.1, reach * reach - (step * step) / 4)));
+    const ground = heightAt(g.x, g.z), sway = down.side * 0.16 * Math.sin(Math.PI * ph);
+    const hips = [g.x + R[0] * sway, ground + HIP - (drop * (1 + Math.cos(2 * Math.PI * ph))) / 2, g.z + R[2] * sway];
+    const knees = [];
+    for (const foot of [stance, swing]) {
+      // The foot turns about its ball; the ankle sits over the heel end. Then the knee, bent forward as far as the
+      // leg has length to spare.
+      const c = Math.cos(foot.tilt), sn = Math.sin(foot.tilt);
+      const ff = plus([foot.f[0] * c, 0, foot.f[2] * c], UP, sn), fu = plus([-foot.f[0] * sn, 0, -foot.f[2] * sn], UP, c), fr = [-foot.f[2], 0, foot.f[0]];
+      out.push(block(foot.p, ff, fr, fu, [-0.78, 0.3], [-0.2, 0.2], [0, 0.24], FLESH));
+      const ankle = plus(plus(foot.p, ff, -0.5), fu, ANKLE), hip = plus(hips, R, foot.side * 0.4);
+      const span = plus(ankle, hip, -1), far = Math.min(2 * SHANK, Math.hypot(span[0], span[1], span[2])), along = unit(span);
+      const fore = unit(plus(F, along, -dot(F, along)));
+      const knee = plus(plus(hip, along, far / 2), fore, Math.sqrt(Math.max(0, SHANK * SHANK - (far * far) / 4)));
+      knees.push(dot(plus(knee, hips, -1), F));
+      out.push(limb(hip, knee, R, 0.3, 0.3, FLESH), limb(knee, ankle, R, 0.24, 0.25, FLESH));
+    }
+    // He leans into a hill and back from a fall, and his head stays on the road ahead.
+    const lean = Math.min(0.4, Math.max(-0.2, 0.07 + (slope > 0 ? 1.1 : 0.8) * Math.atan(slope)));
+    const bU = plus([F[0] * Math.sin(lean), 0, F[2] * Math.sin(lean)], UP, Math.cos(lean)), bF = plus([F[0] * Math.cos(lean), 0, F[2] * Math.cos(lean)], UP, -Math.sin(lean));
+    // The tunic: a skirt to the knee that hangs straight and is pushed out by the knees, the body above the belt.
+    out.push(block(plus(hips, UP, -1.5), F, R, UP, [Math.min(-0.64, Math.min(...knees) - 0.42), Math.max(0.64, Math.max(...knees) + 0.42)], [-1.02, 1.02], [0, 1.62], TUNIC, 0.2, [-0.66, 0.66]));
+    out.push(block(hips, bF, R, bU, [-0.67, 0.67], [-1.04, 1.04], [0, 1.45], TUNIC, 0.3));
+    out.push(block(hips, bF, R, bU, [-0.71, 0.71], [-1.08, 1.08], [0.05, 0.32], BELT, 0.6));
+    out.push(block(plus(hips, UP, -0.85), F, R, UP, [0.68, 0.76], [0.5, 0.74], [0, 0.95], STEEL, 0.8)); // the knife at his belt
+    // The arms swing against the legs, from the shoulder, with a loose elbow. Great hands.
+    const beat = Math.cos(Math.PI * (k + ph)); // +1 as the left foot lands ahead, -1 as the right one does
+    // After dark the right arm is held out in front and carries a lantern.
+    const dark = LIGHT.lamps;
+    for (const side of [-1, 1]) {
+      const carry = side > 0 ? dark : 0, swing = 0.42 * beat * side;
+      const a = swing * (1 - 0.8 * carry) + 0.5 * carry, bend = (0.3 + 0.25 * Math.max(0, Math.sin(swing) * 2)) * (1 - carry) + 1.05 * carry;
+      const dir = (ang) => plus([bF[0] * Math.sin(ang), bF[1] * Math.sin(ang), bF[2] * Math.sin(ang)], bU, -Math.cos(ang));
+      const shoulder = plus(plus(hips, bU, 1.3), R, side * 1.27), elbow = plus(shoulder, dir(a), 1.05), wrist = plus(elbow, dir(a + bend), 0.8);
+      const hand = plus(wrist, dir(a + bend), 0.6);
+      out.push(limb(shoulder, elbow, R, 0.25, 0.27, TUNIC, 0.35), limb(elbow, wrist, R, 0.23, 0.25, TUNIC, 0.35), limb(wrist, hand, R, 0.2, 0.3, FLESH, 0.35));
+      if (carry > 0.05) {
+        // It hangs from his fist on a ring and swings a little with every step: an iron frame round a flame.
+        const hang = 0.14 * Math.sin(Math.PI * (k + ph)), top = plus(hand, R, 0.1);
+        const lamp = plus(plus(top, UP, -0.75 * Math.cos(hang)), F, 0.75 * Math.sin(hang));
+        out.push(limb(top, lamp, R, 0.04, 0.04, IRON, 0.36), block(lamp, F, R, UP, [-0.26, 0.26], [-0.26, 0.26], [-0.62, 0], FLAME, 0.37));
+        out.push(block(lamp, F, R, UP, [-0.3, 0.3], [-0.3, 0.3], [-0.7, -0.62], IRON, 0.38), block(lamp, F, R, UP, [-0.3, 0.3], [-0.3, 0.3], [0, 0.1], IRON, 0.38));
+        out.lamp = plus(lamp, UP, -0.3);
+      }
+    }
+    const nod = lean * 0.45, hU = plus([F[0] * Math.sin(nod), 0, F[2] * Math.sin(nod)], UP, Math.cos(nod)), hF = plus([F[0] * Math.cos(nod), 0, F[2] * Math.cos(nod)], UP, -Math.sin(nod));
+    const neck = plus(hips, bU, 1.45);
+    out.push(block(neck, hF, R, hU, [-0.52, 0.52], [-0.56, 0.56], [0, 1.12], FLESH, 0.4));
+    for (const side of [-1, 1]) out.push(block(neck, hF, R, hU, [0.52, 0.57], [side * 0.26 - 0.13, side * 0.26 + 0.13], [0.63, 0.82], EYE, 1));
+    out.push(block(neck, hF, R, hU, [0.26, 0.76], [-0.52, 0.52], [-0.48, 0.45], STRAW, 0.9));
+    out.push(block(neck, hF, R, hU, [-0.74, -0.45], [-0.6, 0.6], [-0.22, 1.04], MANE, 0.5));
+    out.push(block(neck, hF, R, hU, [-0.67, 0.37], [-0.63, 0.63], [0.97, 1.56], MANE, 0.7));
+    out.push(block(neck, hF, R, hU, [-0.71, 0.43], [-0.67, 0.67], [1.04, 1.23], LEAF, 0.9));
+    return (g.body = out);
+  }
+
+  // Blocks onto the map: an inked outline round the whole figure first, then every face that looks at the camera,
+  // the far blocks before the near ones.
+  function drawBlocks(ctx, blocks) {
+    const eye = sight();
+    for (const b of blocks) {
+      b.px = b.c.map(flat);
+      b.mid = b.c.reduce((m, p) => plus(m, p, 0.125), [0, 0, 0]);
+      b.far = dot(b.mid, eye) - b.over;
+    }
+    blocks.sort((p, q) => q.far - p.far);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 1.1 * INK;
+    ctx.strokeStyle = 'rgba(18,20,26,0.7)';
+    for (const b of blocks) {
+      path(ctx, hull(b.px.slice()));
+      ctx.stroke();
+    }
+    const lamp = blocks.lamp;
+    for (const b of blocks) {
+      for (const face of FACES) {
+        const [p, q, r] = face.map((i) => b.c[i]);
+        let n = unit(cross(plus(q, p, -1), plus(r, q, -1)));
+        if (dot(n, plus(p, b.mid, -1)) < 0) n = [-n[0], -n[1], -n[2]];
+        if (dot(n, eye) >= 0) continue;
+        // A flame is its own light; the rest of him is lit by the sky and, after dark, by the lantern on the side
+        // that is turned to it.
+        const glow = lamp && b.rgb !== FLAME ? 0.4 * LIGHT.lamps * Math.max(0, dot(n, unit(plus(lamp, b.mid, -1)))) : 0;
+        poly(ctx, face.map((i) => b.px[i]), b.rgb === FLAME ? `rgb(${FLAME})` : shade(b.rgb, n[0], n[1], n[2], glow));
+      }
+    }
+  }
+  function drawBolster(ctx, g) {
+    drawBlocks(ctx, bolsterBody(g));
+  }
+
+  // His shadow, cast by the real sun. The shadow of a point lands where the sunbeam through it meets the land: down
+  // the beam in steps, never further than the beam is above the ground, then halving in on the spot. So his shadow
+  // shortens up a slope that faces the sun and stretches down one that falls away. A real shadow is crisp at the
+  // feet and soft at the head, because the sun is a disc and not a point: the shadow is laid down six times, each
+  // a little aside, further aside the longer the beam.
+  function castShadow(p) {
+    const level = Math.hypot(SUN[0], SUN[2]) || 1e-6, sx = -SUN[0] / level, sz = -SUN[2] / level, fall = SUN[1] / level;
+    const above = (s) => p[1] - fall * s - heightAt(p[0] + sx * s, p[2] + sz * s);
+    let near = 0, far = 0;
+    for (let i = 0; i < 200 && above(far) > 0; i++) near = far, far += Math.max(0.3, above(far) / (fall + 0.8));
+    for (let i = 0; i < 6; i++) {
+      const mid = (near + far) / 2;
+      if (above(mid) > 0) near = mid; else far = mid;
+    }
+    const x = p[0] + sx * far, z = p[2] + sz * far;
+    return [x, heightAt(x, z), z, far];
+  }
+  const ASIDE = [[0, 0], [1, 0], [0.31, 0.95], [-0.81, 0.59], [-0.81, -0.59], [0.31, -0.95]];
+  function drawBolsterShadow(ctx, g) {
+    const sun = LIGHT.sun;
+    if (sun < 0.02) return;
+    const casts = bolsterBody(g).map((b) => b.c.map(castShadow));
+    ctx.fillStyle = `rgba(14,18,30,${(1 - (1 - 0.36 * sun) ** (1 / ASIDE.length)).toFixed(4)})`;
+    for (const [ax, az] of ASIDE) {
+      ctx.beginPath();
+      for (const cast of casts) {
+        const pts = hull(cast.map(([x, y, z, far]) => flat([x + ax * far * 0.014, y, z + az * far * 0.014])));
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath();
+      }
+      ctx.fill(); // one fill for all of him: where two blocks shade the same ground it is no darker
+    }
   }
 
   // A bird: two wings that beat, with its shadow far off on the ground.
@@ -1895,7 +2151,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const z = f.z - f.dz * b.back + nz * (b.side + Math.sin(f.t * 0.7 + b.phase) * wob);
     const h = f.h + b.up + Math.sin(f.t * 0.9 + b.phase) * wob * 0.5;
     const sx = x + SHADOW[0] * h, sz = z + SHADOW[1] * h;
-    if (inView(sx, sz, 0)) poly(ctx, [toPx(sx - nx * 0.5, sz - nz * 0.5, 0), toPx(sx + f.dx * 0.4, sz + f.dz * 0.4, 0), toPx(sx + nx * 0.5, sz + nz * 0.5, 0)], 'rgba(16,20,30,0.14)');
+    if (LIGHT.sun > 0.05 && inView(sx, sz, 0)) poly(ctx, [toPx(sx - nx * 0.5, sz - nz * 0.5, 0), toPx(sx + f.dx * 0.4, sz + f.dz * 0.4, 0), toPx(sx + nx * 0.5, sz + nz * 0.5, 0)], `rgba(16,20,30,${(0.14 * LIGHT.sun).toFixed(3)})`);
     if (!inView(x, z, h)) return;
     const beat = Math.sin(f.t * f.hz * Math.PI * 2 + b.phase), w = f.span / 2;
     const c = toPx(x, z, h);
@@ -1907,7 +2163,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     ctx.lineTo(...toPx(x + nx * w, z + nz * w, h + beat * w * 0.5));
     ctx.moveTo(...toPx(x - f.dx * 0.35, z - f.dz * 0.35, h));
     ctx.lineTo(...toPx(x + f.dx * (f.geese ? 0.6 : 0.25), z + f.dz * (f.geese ? 0.6 : 0.25), h));
-    ctx.lineWidth = f.geese ? 1.1 : 0.9;
+    ctx.lineWidth = (f.geese ? 1.1 : 0.9) * INK;
     ctx.lineJoin = 'round';
     ctx.strokeStyle = f.geese ? '#4a4540' : '#2e2c2a';
     ctx.stroke();
@@ -1926,7 +2182,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (k < 0.03) return; // less than a pixel
     const inView = (gx, gz, h) => {
       const [px, py] = toPx(gx, gz, h);
-      return px > b.x - 80 && px < b.x + b.width + 80 && py > b.y - 80 && py < b.y + b.height + 80;
+      return px > b.x - 80 * INK && px < b.x + b.width + 80 * INK && py > b.y - 80 * INK && py < b.y + b.height + 80 * INK;
     };
     const front = [];
     for (const m of movers) {
@@ -1936,8 +2192,12 @@ Work step by step, check the licences of the data you use, and ask me about the 
     }
     // Bolster: tall enough to see from far off, and under the buildings and trees layer where he walks behind them,
     // so a house in front hides his legs and not his head.
+    // His shadow lies on the ground: under the buildings and trees, and under everyone who walks through it.
     const g = bolsterNow();
-    if (g && k >= 0.1 && inView(g.x, g.z, 0)) (objectsLayer && g.behind ? behind : front).push([depthOf(g.x, g.z), g, g.x, g.z, g.dx, g.dz]);
+    if (g && k >= 0.1 && inView(g.x, g.z, 0)) {
+      (objectsLayer && g.behind ? behind : front).push([depthOf(g.x, g.z), g, g.x, g.z, g.dx, g.dz]);
+      (objectsLayer ? behind : front).push([Infinity, { mode: SHADE, of: g, alpha: g.alpha }, g.x, g.z, 0, 0]);
+    }
     // The dippers sit low in open water: drawn under the buildings and trees layer, so whatever stands in front hides them.
     dippers ||= makeDippers();
     if (k >= 0.35 && inView(dippers.x, dippers.z, 0)) (objectsLayer ? behind : front).push([depthOf(dippers.x, dippers.z), dippers, dippers.x, dippers.z, 0, 0]);
@@ -1947,43 +2207,96 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // Movers (and the birds, given inView) onto a canvas that shows the map view b at k device pixels per map pixel.
   function paint(ctx, b, k, seen, inView) {
     seen.sort((p, q) => q[0] - p[0]); // the far ones first
-    let target = ctx;
-    const ox = Math.floor(b.x) - 2, oy = Math.floor(b.y) - 2, ow = Math.ceil(b.width) + 5, oh = Math.ceil(b.height) + 5;
-    if (k > 1) {
-      if (off.width < ow || off.height < oh) off.width = Math.max(off.width, ow), off.height = Math.max(off.height, oh);
-      target = off.getContext('2d');
-      target.setTransform(1, 0, 0, 1, 0, 0);
-      target.clearRect(0, 0, ow, oh);
-      target.setTransform(1, 0, 0, 1, -ox, -oy);
-    } else {
-      ctx.setTransform(k, 0, 0, k, -b.x * k, -b.y * k);
-    }
+    ctx.setTransform(k, 0, 0, k, -b.x * k, -b.y * k);
     for (const [, m, x, z, dx, dz] of seen) {
-      target.globalAlpha = m.alpha;
-      drawMover(target, m, x, z, dx, dz);
+      ctx.globalAlpha = m.alpha;
+      drawMover(ctx, m, x, z, dx, dz);
     }
-    target.globalAlpha = 1;
-    if (inView) for (const f of flocks) for (const bird of f.birds) drawBird(target, f, bird, inView);
-    if (k > 1) {
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(off, 0, 0, ow, oh, (ox - b.x) * k, (oy - b.y) * k, ow * k, oh * k);
-    }
+    ctx.globalAlpha = 1;
+    if (inView) for (const f of flocks) for (const bird of f.birds) drawBird(ctx, f, bird, inView);
   }
 
-  // Evening: lamps along the village streets, headlights and rear lights on the cars and trucks, a lamp on each bike.
-  let evening = false, lights = null, lamps = null;
-  function glowSprite(rgb) {
+  // The sky. The light on the map follows the real sun over St Agnes (50.31° N, 5.20° W): where it stands in the sky
+  // at this minute follows from the time alone, so everyone sees the same light. sunAt gives its azimuth (degrees
+  // clockwise from north) and its elevation above the horizon, to about a hundredth of a degree: the low-precision
+  // formulas of the Astronomical Almanac.
+  const HERE = [50.31, -5.2];
+  function sunAt(t) {
+    const rad = Math.PI / 180, d = t / 86400 - 10957.5; // days since noon on 1 January 2000
+    const g = (357.529 + 0.98560028 * d) * rad; // how far the earth is round its orbit
+    const lon = (280.459 + 0.98564736 * d + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * rad, tilt = (23.439 - 3.6e-7 * d) * rad;
+    const ra = Math.atan2(Math.cos(tilt) * Math.sin(lon), Math.cos(lon)), dec = Math.asin(Math.sin(tilt) * Math.sin(lon));
+    const hour = ((18.697374558 + 24.06570982441908 * d) * 15 + HERE[1]) * rad - ra, lat = HERE[0] * rad; // angle past due south
+    const el = Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(hour));
+    const az = Math.atan2(-Math.sin(hour), Math.tan(dec) * Math.cos(lat) - Math.sin(lat) * Math.cos(hour));
+    return { az: (az / rad + 360) % 360, el: el / rad };
+  }
+  // What the light is like at each height of the sun, in degrees: the colour the light map multiplies the map with,
+  // how far the lamps are on, how strong the sunlight and its shadows are, and the grade (saturation and warmth).
+  // Golden toward sunset, pink and violet in the dusk, the blue of moonlight after.
+  const HOURS = [
+    [-12, 0.3, 0.38, 0.7, 1, 0, 0.6, 0],
+    [-6, 0.42, 0.46, 0.74, 1, 0, 0.72, 0],
+    [-2, 0.8, 0.68, 0.8, 0.85, 0, 1, 0.04],
+    [1, 1, 0.82, 0.68, 0.1, 0.3, 1.26, 0.12],
+    [6, 1, 0.94, 0.85, 0, 0.85, 1.3, 0.12],
+    [14, 1, 1, 1, 0, 1, 1.3, 0.1],
+  ];
+  function lightAt(el) {
+    let i = 1;
+    while (i < HOURS.length - 1 && HOURS[i][0] < el) i++;
+    const a = HOURS[i - 1], b = HOURS[i], f = Math.min(1, Math.max(0, (el - a[0]) / (b[0] - a[0])));
+    return a.map((v, k) => v + (b[k] - v) * f).slice(1);
+  }
+  // LIGHT is the light as drawn now. It eases toward the light of the hour, so dusk falls slowly and a click on the
+  // moon button turns to night in a second. skyWant is that button: null follows the sun, or 'night' or 'day'.
+  const RENDER_SUN = { az: 250, el: 40 }; // the sun the tiles were rendered with (scripts/sun.py)
+  const LIGHT = { amb: [1, 1, 1], lamps: 0, sun: 1, sat: 1.3, warm: 0.1, az: RENDER_SUN.az, el: RENDER_SUN.el };
+  let skyWant = null, skyGoal = null, skyRead = -Infinity, grade = '';
+  const isDark = (el) => el < -1.5;
+  function readSky() {
+    skyRead = clock;
+    const real = sunAt(unix());
+    // By hand: night is a moonlit hour with the sun well down, day is the afternoon sun of the render.
+    const sky = skyWant === 'night' ? { az: real.az, el: -14 } : skyWant === 'day' ? RENDER_SUN : real;
+    skyGoal = { sky, to: lightAt(sky.el) };
+    const dark = isDark(sky.el);
+    document.body.classList.toggle('evening', dark);
+    eveningBtn.setAttribute('aria-pressed', String(dark));
+  }
+  function stepSky(dt) {
+    if (clock - skyRead > 20) readSky();
+    const { sky, to } = skyGoal, k = clock ? 1 - Math.exp(-dt * 3.5) : 1; // the first frame takes the light as it is
+    const ease = (v, goal) => (Math.abs(goal - v) < 1e-4 ? goal : v + (goal - v) * k);
+    LIGHT.amb = LIGHT.amb.map((v, i) => ease(v, to[i]));
+    LIGHT.lamps = ease(LIGHT.lamps, to[3]), LIGHT.sun = ease(LIGHT.sun, to[4]), LIGHT.sat = ease(LIGHT.sat, to[5]), LIGHT.warm = ease(LIGHT.warm, to[6]);
+    // Shadows point away from the sun. Near the horizon they would run on for ever, so the sun that casts them
+    // stays at least six degrees up, and they fade out as it sets.
+    LIGHT.az = sky.az, LIGHT.el = Math.max(6, sky.el);
+    const az = (LIGHT.az * Math.PI) / 180, el = (LIGHT.el * Math.PI) / 180;
+    SUN = [Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)];
+    SHADOW = [-SUN[0] / SUN[1], -SUN[2] / SUN[1]];
+    const g = `sepia(${LIGHT.warm.toFixed(3)}) saturate(${LIGHT.sat.toFixed(3)}) contrast(1.05)`;
+    if (g !== grade) mapEl.style.setProperty('--grade', (grade = g));
+  }
+
+  // Dusk and night: lamps along the village streets, headlights and rear lights on the cars and trucks, a lamp on
+  // each bike. Each light is drawn twice: its pool on the light map, where it gives the ground its colours back, and
+  // the lamp itself on the glow layer.
+  let lights = null, lightMap = null, lamps = null;
+  function glowSprite(rgb, mid = 0.5) { // mid: how bright it still is a third of the way out
     const c = document.createElement('canvas');
     c.width = c.height = 64;
     const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
     grad.addColorStop(0, `rgba(${rgb},1)`);
-    grad.addColorStop(0.3, `rgba(${rgb},0.5)`);
+    grad.addColorStop(0.35, `rgba(${rgb},${mid})`);
     grad.addColorStop(1, `rgba(${rgb},0)`);
     g.fillStyle = grad;
     g.fillRect(0, 0, 64, 64);
     return c;
   }
   const LAMP = glowSprite('255,186,105'), BEAM = glowSprite('255,242,210'), REAR = glowSprite('255,48,32');
+  const POOL = glowSprite('255,214,150', 0.6), WHITE = glowSprite('255,246,226', 0.6); // lamplight and headlights on the ground
   // A street lamp every 34 m on one side of each village street: every residential street, and the bigger roads
   // within 650 m of the church.
   function makeLamps() {
@@ -2012,21 +2325,31 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
   function drawLights() {
     if (!lights) return;
-    if (!evening) {
-      if (lights.width) lights.width = 0;
-      return;
-    }
+    // In full daylight both layers are empty and put away.
+    const lit = LIGHT.lamps > 0.004 || Math.min(...LIGHT.amb) < 0.996;
+    lightMap.hidden = lights.hidden = !lit;
+    if (!lit) return;
+    const b = viewer.viewport.viewportToImageRectangle(viewer.viewport.getBounds(true));
+    // The light map: the colour of the hour all over, at half the sharpness of the screen in CSS pixels, since light
+    // is soft.
+    const mw = Math.max(1, Math.ceil(lightMap.clientWidth / 2)), mh = Math.max(1, Math.ceil(lightMap.clientHeight / 2));
+    if (lightMap.width !== mw || lightMap.height !== mh) lightMap.width = mw, lightMap.height = mh;
+    const map = lightMap.getContext('2d');
+    map.setTransform(1, 0, 0, 1, 0, 0);
+    map.globalAlpha = 1;
+    map.fillStyle = `rgb(${LIGHT.amb.map((v) => Math.round(v * 255)).join(',')})`;
+    map.fillRect(0, 0, mw, mh);
     const dpr = window.devicePixelRatio || 1;
     const cw = Math.round(lights.clientWidth * dpr), ch = Math.round(lights.clientHeight * dpr);
     if (lights.width !== cw || lights.height !== ch) lights.width = cw, lights.height = ch;
     const ctx = lights.getContext('2d');
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
-    const b = viewer.viewport.viewportToImageRectangle(viewer.viewport.getBounds(true));
-    const k = cw / b.width;
-    if (k < 0.03) return;
+    const k = cw / b.width, on = LIGHT.lamps;
+    if (k < 0.03 || on < 0.004 || !lanes.length) return;
     ctx.setTransform(k, 0, 0, k, -b.x * k, -b.y * k);
     ctx.globalCompositeOperation = 'lighter';
+    map.setTransform(mw / b.width, 0, 0, mw / b.width, (-b.x * mw) / b.width, (-b.y * mw) / b.width);
     const pad = 60 * M.scale;
     const inView = (x, z) => {
       const [px, py] = toPx(x, z, 0);
@@ -2035,18 +2358,18 @@ Work step by step, check the licences of the data you use, and ask me about the 
     lamps ||= makeLamps();
     for (const [x, z] of lamps) {
       if (!inView(x, z)) continue;
-      blob(ctx, LAMP, x, z, 0, 9, 0.34, true);
-      blob(ctx, LAMP, x, z, 5, 1.3, 0.95);
+      blob(map, POOL, x, z, 0, 17, 0.85 * on, true);
+      blob(ctx, LAMP, x, z, 5, 1.3, 0.95 * on);
     }
     for (const m of movers) {
       if (m.mode === WALK || m.alpha <= 0.01 || m.behind || (m.mode === BIKE && k < 0.35)) continue;
       const [x, z, dx, dz] = place(m);
       if (!inView(x, z)) continue;
-      const nx = -dz, nz = dx, a = m.alpha, half = m.half;
+      const nx = -dz, nz = dx, a = m.alpha * on, half = m.half;
       if (m.mode === BIKE) {
         blob(ctx, BEAM, x + dx * half, z + dz * half, 0.9, 0.45, a);
         blob(ctx, REAR, x - dx * half, z - dz * half, 0.8, 0.3, 0.9 * a);
-        blob(ctx, BEAM, x + dx * 4, z + dz * 4, 0, 2.6, 0.22 * a, true);
+        blob(map, WHITE, x + dx * 4, z + dz * 4, 0, 3.2, 0.45 * a, true);
         continue;
       }
       const w = m.type === 'truck' ? 1.0 : 0.66, h = m.type === 'truck' ? 0.9 : 0.6;
@@ -2054,11 +2377,270 @@ Work step by step, check the licences of the data you use, and ask me about the 
         blob(ctx, BEAM, x + dx * half + nx * sd, z + dz * half + nz * sd, h, 0.6, a);
         blob(ctx, REAR, x - dx * half + nx * sd, z - dz * half + nz * sd, h + 0.1, 0.5, 0.85 * a);
       }
-      blob(ctx, BEAM, x + dx * (half + 5), z + dz * (half + 5), 0, 4.5, 0.32 * a, true);
-      blob(ctx, BEAM, x + dx * (half + 12), z + dz * (half + 12), 0, 6, 0.16 * a, true);
+      blob(map, WHITE, x + dx * (half + 5), z + dz * (half + 5), 0, 5.5, 0.7 * a, true);
+      blob(map, WHITE, x + dx * (half + 12), z + dz * (half + 12), 0, 7.5, 0.4 * a, true);
     }
+    // Bolster's lantern: a wide pool on the road around him that wavers as a flame does, light on the giant himself,
+    // and the flame.
+    const giant = bolsterShown, lamp = giant && bolsterBody(giant).lamp;
+    if (lamp && inView(giant.x, giant.z)) {
+      const t = unix(), a = giant.alpha * on * (1 + 0.05 * Math.sin(t * 7.3) + 0.03 * Math.sin(t * 12.7));
+      const up = lamp[1] - heightAt(lamp[0], lamp[2]);
+      blob(map, POOL, lamp[0], lamp[2], 0, 24, 0.95 * a, true);
+      blob(map, POOL, lamp[0], lamp[2], up, 7, 0.9 * a);
+      if (!(objectsLayer && giant.behind)) {
+        blob(ctx, LAMP, lamp[0], lamp[2], up, 2.2, 0.9 * a);
+        blob(ctx, BEAM, lamp[0], lamp[2], up, 0.7, a);
+      }
+    }
+    ctx.globalAlpha = map.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // The map as it stands on the screen without the lens, w by h pixels on a canvas: the tiles, the traffic, the light
+  // map multiplied in and the glow over it. The lens blurs a small copy of this, and a turn of the map takes a still.
+  function drawStack(ctx, w, h) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#20242c';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(viewer.drawer.canvas, 0, 0, w, h);
+    if (layer.width) ctx.drawImage(layer, 0, 0, w, h);
+    if (!lightMap.hidden && lightMap.width) {
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.drawImage(lightMap, 0, 0, w, h);
+      ctx.globalCompositeOperation = 'screen';
+      if (lights.width) ctx.drawImage(lights, 0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+
+  // The lens: what makes the map look like a miniature photographed up close. A camera that near to a model keeps
+  // only a thin slice of it sharp, and the picture blooms a little where it is bright. One small WebGL pass does
+  // both: it takes a copy of the screen at a third or so of its size, blurs every point by how far it lies from
+  // the plane of focus, adds the bloom and a soft vignette, and lays the result over the sharp map, see-through
+  // where the map is in focus. The full-size picture never goes through it, so a phone keeps up.
+  //
+  // How far a point is from the camera follows from the projection: along the line of sight, a point one metre up
+  // the screen is 1.73 m further away, and a metre of height brings it 2 m nearer. So the top of the Beacon is in
+  // focus when the fields behind it are not, and a beach is soft under a sharp cliff top. The heights come from
+  // height.bin, the focus is on the ground in the middle of the screen.
+  const LENS_VERT = `#version 300 es
+    in vec2 at; out vec2 uv;
+    void main() { uv = at * 0.5 + 0.5; gl_Position = vec4(at, 0.0, 1.0); }`;
+  const LENS_HEAD = `#version 300 es
+    precision highp float;
+    in vec2 uv; out vec4 o;
+    uniform sampler2D tex, heights;
+    uniform vec2 px, dir;     // one pixel of tex, and the way this pass blurs
+    uniform vec4 focus;       // the row in focus, the height of the ground there, metres of ground up the screen, the widest blur
+    uniform vec2 land;        // lowest ground and the span of the heights
+    uniform float soft;       // blur all over, while the lens pulls focus
+    float sigma(vec2 p) {
+      float h = texture(heights, p).r * land.y + land.x;
+      float d = abs(p.y - focus.x - 1.1547 * (h - focus.y) / focus.z);
+      float c = smoothstep(0.15, 0.6, d);
+      return length(vec2(focus.w * c, soft));
+    }
+    // Nine taps of a bell curve, three standard deviations either way, each read from the mip that covers its step.
+    vec4 blur(vec2 p, float s) {
+      if (s < 0.2) return texture(tex, p);
+      float st = s * 0.75, lod = max(0.0, log2(st));
+      vec2 d = dir * px * st;
+      vec4 c = textureLod(tex, p, lod) * 0.2994;
+      c += (textureLod(tex, p + d, lod) + textureLod(tex, p - d, lod)) * 0.226;
+      c += (textureLod(tex, p + 2.0 * d, lod) + textureLod(tex, p - 2.0 * d, lod)) * 0.0972;
+      c += (textureLod(tex, p + 3.0 * d, lod) + textureLod(tex, p - 3.0 * d, lod)) * 0.0238;
+      c += (textureLod(tex, p + 4.0 * d, lod) + textureLod(tex, p - 4.0 * d, lod)) * 0.0033;
+      return c;
+    }`;
+  const LENS_ACROSS = LENS_HEAD + `
+    void main() { o = blur(uv, sigma(uv)); }`;
+  // The bright parts only, a quarter of the size, blurred across: the start of the bloom.
+  const LENS_BRIGHT = LENS_HEAD + `
+    uniform float knee;
+    vec3 bright(vec2 p) {
+      vec3 c = textureLod(tex, p, 2.0).rgb;
+      return c * smoothstep(knee, knee + 0.3, max(c.r, max(c.g, c.b)));
+    }
+    void main() {
+      vec2 d = dir * px * 6.0;
+      vec3 c = bright(uv) * 0.2994;
+      c += (bright(uv + d) + bright(uv - d)) * 0.226 + (bright(uv + 2.0 * d) + bright(uv - 2.0 * d)) * 0.0972;
+      c += (bright(uv + 3.0 * d) + bright(uv - 3.0 * d)) * 0.0238 + (bright(uv + 4.0 * d) + bright(uv - 4.0 * d)) * 0.0033;
+      o = vec4(c, 1.0);
+    }`;
+  const LENS_GLOW = LENS_HEAD + `
+    void main() {
+      vec2 d = dir * px * 1.5;
+      vec4 c = texture(tex, uv) * 0.2994;
+      c += (texture(tex, uv + d) + texture(tex, uv - d)) * 0.226 + (texture(tex, uv + 2.0 * d) + texture(tex, uv - 2.0 * d)) * 0.0972;
+      c += (texture(tex, uv + 3.0 * d) + texture(tex, uv - 3.0 * d)) * 0.0238 + (texture(tex, uv + 4.0 * d) + texture(tex, uv - 4.0 * d)) * 0.0033;
+      o = c;
+    }`;
+  // The last pass blurs down the screen and puts it all together. Its colours are multiplied by their alpha, so the
+  // bloom, which has none, adds light to the sharp map under it, and the vignette, which is only alpha, darkens it.
+  const LENS_DOWN = LENS_HEAD + `
+    uniform sampler2D glow;
+    uniform float bloom, vignette;
+    void main() {
+      float s = sigma(uv);
+      float a = smoothstep(0.1, 0.8, s);
+      vec3 c = blur(uv, s).rgb * a + texture(glow, uv).rgb * bloom;
+      float v = vignette * smoothstep(0.5, 1.0, length(uv - 0.5) * 1.4142);
+      float grain = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+      o = vec4(c * (1.0 - v) + grain / 255.0, 1.0 - (1.0 - a) * (1.0 - v));
+    }`;
+  let lens = null, focusPull = 0;
+  const lensAsked = new URLSearchParams(location.search).get('lens'); // ?lens=off for the plain map, ?lens=on to keep it whatever it costs
+  function makeLens(after) {
+    const el = document.createElement('canvas');
+    // The picture is kept after it is shown, so a turn of the map can take a still of it.
+    const gl = lensAsked === 'off' ? null : el.getContext('webgl2', { antialias: false, depth: false, stencil: false, preserveDrawingBuffer: true });
+    if (!gl) return void document.body.classList.toggle('no-lens', lensAsked !== 'off'); // no WebGL: the blur layers of the stylesheet
+    el.id = 'lens';
+    after.after(el);
+    const shader = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+      return sh;
+    };
+    const program = (frag) => {
+      const pr = gl.createProgram();
+      gl.attachShader(pr, shader(gl.VERTEX_SHADER, LENS_VERT));
+      gl.attachShader(pr, shader(gl.FRAGMENT_SHADER, frag));
+      gl.bindAttribLocation(pr, 0, 'at');
+      gl.linkProgram(pr);
+      if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+      const at = {};
+      for (let i = 0; i < gl.getProgramParameter(pr, gl.ACTIVE_UNIFORMS); i++) {
+        const name = gl.getActiveUniform(pr, i).name;
+        at[name] = gl.getUniformLocation(pr, name);
+      }
+      return { pr, at };
+    };
+    const texture = (mips) => {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mips ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return t;
+    };
+    try {
+      lens = {
+        el, gl, across: program(LENS_ACROSS), bright: program(LENS_BRIGHT), glowPass: program(LENS_GLOW), down: program(LENS_DOWN),
+        scene: texture(true), blurred: texture(true), glowA: texture(false), glowB: texture(false), heights: texture(false),
+        fbo: gl.createFramebuffer(), copy: document.createElement('canvas'), grid: new Uint8Array(40 * 24), seen: '', w: 0, h: 0,
+        focus: null, cost: 0, slow: 0, coarser: 0,
+      };
+    } catch (e) {
+      console.warn('The lens is off:', e.message);
+      el.remove();
+      return void document.body.classList.add('no-lens');
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW); // one triangle over the whole picture
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.disable(gl.BLEND);
+    // A browser may take the context away (a phone that is short of memory); the plain map is still there under it.
+    el.addEventListener('webglcontextlost', () => { lens = null; el.remove(); });
+  }
+  function drawLens(dt) {
+    if (!lens) return;
+    const t0 = performance.now();
+    const { gl, el, copy } = lens, map = viewer.drawer.canvas;
+    if (!map.width || !map.height) return;
+    // The copy of the screen: about 600 000 pixels, however sharp the screen is.
+    const cut = Math.min(6, Math.max(2, Math.ceil(Math.sqrt((map.width * map.height) / 600000))) + lens.coarser);
+    const w = Math.max(8, Math.round(map.width / cut)), h = Math.max(8, Math.round(map.height / cut));
+    const sized = w !== lens.w || h !== lens.h;
+    if (sized) {
+      lens.w = el.width = copy.width = w, lens.h = el.height = copy.height = h;
+      for (const [t, tw, th] of [[lens.blurred, w, h], [lens.glowA, w >> 2, h >> 2], [lens.glowB, w >> 2, h >> 2]]) {
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, Math.max(1, tw), Math.max(1, th), 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      }
+    }
+    const ctx = copy.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    drawStack(ctx, w, h);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.bindTexture(gl.TEXTURE_2D, lens.scene);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, copy);
+    gl.generateMipmap(gl.TEXTURE_2D);
+
+    // The height of the ground behind every part of the screen, on a coarse grid, read again when the view moves.
+    const vp = viewer.viewport, b = vp.viewportToImageRectangle(vp.getBounds(true)), t = M.area.terrain || { min: 0, max: 1 };
+    const span = Math.max(1, t.max - t.min), seen = `${b.x.toFixed(1)},${b.y.toFixed(1)},${b.width.toFixed(1)},${w},${h},${VIEW.i}`;
+    if (seen !== lens.seen || sized) {
+      lens.seen = seen;
+      const cols = 40, rows = 24;
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+        const g = imageToGround(b.x + ((c + 0.5) / cols) * b.width, b.y + (1 - (r + 0.5) / rows) * b.height);
+        lens.grid[r * cols + c] = Math.round(Math.min(1, Math.max(0, (heightAt(g.x, g.z) - t.min) / span)) * 255);
+      }
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.bindTexture(gl.TEXTURE_2D, lens.heights);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, cols, rows, 0, gl.RED, gl.UNSIGNED_BYTE, lens.grid);
+      const mid = imageToGround(b.x + b.width / 2, b.y + b.height / 2);
+      lens.aim = heightAt(mid.x, mid.z);
+    }
+    // The focus follows the ground in the middle of the screen, a little behind, as a lens does.
+    lens.focus = lens.focus === null ? lens.aim : lens.focus + (lens.aim - lens.focus) * (1 - Math.exp(-dt * 6));
+    focusPull = Math.max(0, focusPull - dt / 1.1);
+    const wide = (0.0085 * map.height) / cut; // the widest blur, at the top and bottom of the screen, in pixels of the copy
+    const dusk = Math.min(1, LIGHT.lamps);
+
+    const pass = (p, target, tw, th, tex, dir, set) => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target ? lens.fbo : null);
+      if (target) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target, 0);
+      gl.viewport(0, 0, tw, th);
+      gl.useProgram(p.pr);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, lens.heights);
+      gl.uniform1i(p.at.tex, 0);
+      gl.uniform1i(p.at.heights, 1);
+      gl.uniform2f(p.at.px, 1 / w, 1 / h);
+      gl.uniform2f(p.at.dir, dir[0], dir[1]);
+      gl.uniform4f(p.at.focus, 0.5, lens.focus, b.height / M.scale, wide);
+      gl.uniform2f(p.at.land, t.min, span);
+      gl.uniform1f(p.at.soft, wide * 0.8 * focusPull * focusPull);
+      set?.(p.at);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    };
+    const gw = Math.max(1, w >> 2), gh = Math.max(1, h >> 2);
+    pass(lens.across, lens.blurred, w, h, lens.scene, [1, 0]);
+    gl.bindTexture(gl.TEXTURE_2D, lens.blurred);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    // By day only the brightest things bloom: white walls, surf, sand. At night the lamps do, against the dark.
+    pass(lens.bright, lens.glowA, gw, gh, lens.scene, [1, 0], (at) => gl.uniform1f(at.knee, 0.74 - 0.3 * dusk));
+    pass(lens.glowPass, lens.glowB, gw, gh, lens.glowA, [0, 4]); // its pixels are four of the copy's
+    pass(lens.down, null, w, h, lens.blurred, [0, 1], (at) => {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, lens.glowB);
+      gl.uniform1i(at.glow, 2);
+      gl.uniform1f(at.bloom, 0.34 + 0.5 * dusk);
+      gl.uniform1f(at.vignette, 0.2);
+    });
+
+    // If the lens costs more than a frame can spare, it first works on a smaller copy, and then steps aside.
+    lens.cost += (performance.now() - t0 - lens.cost) * 0.05;
+    if (lensAsked !== 'on' && lens.cost > 7 && ++lens.slow > 90) {
+      lens.slow = 0, lens.cost = 0;
+      if (++lens.coarser > 2) {
+        lens = null;
+        el.remove();
+      }
+    }
   }
 
   // OpenSeadragon draws its images in order: the map, then the movers behind something, then buildings and trees.
@@ -2085,10 +2667,13 @@ Work step by step, check the licences of the data you use, and ask me about the 
     };
   }
 
+  // Every frame. OpenSeadragon draws the tiles in a frame callback of its own, which was asked for first and so runs
+  // first: by the time this one runs the tiles are where the view is now, and the lens copies a screen that agrees.
   let lastFrame = 0, clock = 0;
   function frame(t) {
     const dt = Math.min(0.1, (t - (lastFrame || t)) / 1000);
     lastFrame = t;
+    stepSky(dt);
     step(dt);
     stepBirds(dt);
     clock += dt;
@@ -2096,7 +2681,21 @@ Work step by step, check the licences of the data you use, and ask me about the 
     draw();
     drawLights();
     if (objectsLayer && (had || behind.length)) viewer.forceRedraw(); // so the movers between the layers move too
+    drawLens(dt);
     requestAnimationFrame(frame);
+  }
+
+  // The veil: the map stays hidden until the tiles of the first view are in, then fades in while the lens pulls
+  // focus, so nobody watches coarse tiles sharpen. If the tiles are slow it lifts after four seconds anyway.
+  function unveil() {
+    const items = Array.from({ length: viewer.world.getItemCount() }, (_, i) => viewer.world.getItemAt(i));
+    const lift = () => {
+      if (document.body.classList.contains('ready')) return;
+      focusPull = 1;
+      document.body.classList.add('ready');
+    };
+    for (const item of items) item.addHandler('fully-loaded-change', () => items.every((i) => i.getFullyLoaded()) && lift());
+    setTimeout(lift, 4000);
   }
 
 
@@ -2121,15 +2720,16 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // rotation of a plane squashed to half its height; turnMatrix(deg) moves a ground point's screen position by deg
   // degrees. A still of the old view stays up until the next view, already in place underneath, has its tiles; then
   // the still turns away and fades while the new view turns in after it, in a fifth of a second. Both are drawn into
-  // one canvas whose pixels grow coarse halfway through the turn and fine again, like an old game console.
+  // one canvas whose picture goes soft halfway through the turn and sharp again, like a lens that loses its focus
+  // and finds it.
   const turnMatrix = (deg) => {
     const a = (deg * Math.PI) / 180, c = Math.cos(a), sn = Math.sin(a);
     return [c, -sn / 2, 2 * sn, c];
   };
-  const PIXEL = 10; // the coarsest block halfway through the turn, in CSS pixels
+  const SOFT = 5; // how soft halfway through the turn: the picture is drawn this many times smaller, in CSS pixels
   let turning = false;
-  // dir is +1 for the next view, -1 for the one before; from is the angle the map already stands at (see the spin below).
-  function rotateView(dir = 1, from = 0) {
+  // dir is +1 for the next view, -1 for the one before; start is the angle the map already stands at (see the spin below).
+  function rotateView(dir = 1, start = 0) {
     const views = M?.views || [];
     if (views.length < 2 || turning) return;
     turning = true;
@@ -2141,24 +2741,23 @@ Work step by step, check the licences of the data you use, and ask me about the 
 
     const map = viewer.drawer.canvas, W = map.width, H = map.height;
     const dpr = W / Math.max(1, viewer.element.clientWidth);
-    const still = (...srcs) => {
+    // The map as it stands on the screen, on one sheet: tiles, traffic, light, and the lens over them.
+    const sheet = () => {
       const c = document.createElement('canvas');
       c.width = W;
       c.height = H;
-      for (const src of srcs) if (src?.width) c.getContext('2d').drawImage(src, 0, 0, W, H);
       return c;
     };
-    // The map with its traffic on one sheet; in the evening the lamps and headlights on a second that glows over it.
-    const sheets = [{ live: [map, layer], from: still(map, layer) }];
-    if (evening && lights?.width) sheets.push({ live: [lights], from: still(lights), glow: true });
-    for (const sh of sheets) {
-      sh.el = document.createElement('canvas');
-      sh.el.className = sh.glow ? 'ghost glow' : 'ghost';
-      sh.el.width = W;
-      sh.el.height = H;
-      sh.el.getContext('2d').drawImage(sh.from, 0, 0);
-      viewer.element.appendChild(sh.el);
-    }
+    const flatten = (c) => {
+      const ctx = c.getContext('2d');
+      drawStack(ctx, W, H);
+      if (lens?.el.width) ctx.drawImage(lens.el, 0, 0, W, H);
+    };
+    const from = sheet(), live = sheet(), ghost = sheet();
+    flatten(from);
+    ghost.className = 'ghost';
+    ghost.getContext('2d').drawImage(from, 0, 0);
+    viewer.element.appendChild(ghost);
     // The live map stays hidden under the turn; the canvas shows it.
     const stage = viewer.canvas;
     stage.style.visibility = 'hidden';
@@ -2186,42 +2785,40 @@ Work step by step, check the licences of the data you use, and ask me about the 
     const fade = (t) => Math.min(1, Math.max(0, (t - 0.2) / 0.5));
     let block = 1;
     const paint = (t, stillOnly = false) => {
-      const b = Math.max(1, Math.round(dpr * PIXEL * Math.sin(Math.PI * t))), deg = from + (turn - from) * ease(t);
-      const resize = b !== block;
+      const b = Math.max(1, Math.round(dpr * SOFT * Math.sin(Math.PI * t))), deg = start + (turn - start) * ease(t);
+      if (b !== block) {
+        ghost.width = Math.ceil(W / b);
+        ghost.height = Math.ceil(H / b);
+      }
       block = b;
-      for (const sh of sheets) {
-        if (resize) {
-          sh.el.width = Math.ceil(W / b);
-          sh.el.height = Math.ceil(H / b);
-        }
-        const ctx = sh.el.getContext('2d'), k = sh.el.width / W;
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, sh.el.width, sh.el.height);
-        ctx.imageSmoothingQuality = 'high';
-        for (const [d, alpha, imgs] of [...(stillOnly ? [] : [[deg - turn, 1, sh.live]]), [deg, 1 - fade(t), [sh.from]]]) {
-          ctx.globalAlpha = alpha;
-          ctx.setTransform(k, 0, 0, k, (k * W) / 2, (k * H) / 2);
-          ctx.transform(...turnMatrix(d), 0, 0);
-          ctx.translate(-W / 2, -H / 2);
-          for (const img of imgs) if (img?.width) ctx.drawImage(img, 0, 0, W, H);
-        }
+      if (!stillOnly) flatten(live);
+      const ctx = ghost.getContext('2d'), k = ghost.width / W;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, ghost.width, ghost.height);
+      ctx.imageSmoothingQuality = 'high';
+      for (const [d, alpha, img] of [...(stillOnly ? [] : [[deg - turn, 1, live]]), [deg, 1 - fade(t), from]]) {
+        ctx.globalAlpha = alpha;
+        ctx.setTransform(k, 0, 0, k, (k * W) / 2, (k * H) / 2);
+        ctx.transform(...turnMatrix(d), 0, 0);
+        ctx.translate(-W / 2, -H / 2);
+        ctx.drawImage(img, 0, 0, W, H);
       }
     };
-    if (from) paint(0, true); // the still waits at the angle the map was let go at
+    if (start) paint(0, true); // the still waits at the angle the map was let go at
     const t0 = performance.now();
-    let start = null;
+    let began = null;
     const ready = () => added.filter(Boolean).length === urls.length && added.every((item) => item.getFullyLoaded());
     const tick = (now) => {
-      if (start === null) {
+      if (began === null) {
         if (!ready() && now - t0 < 1500) return requestAnimationFrame(tick);
-        start = now;
+        began = now;
         pointNorth();
       }
-      const t = Math.min(1, (now - start) / D);
+      const t = Math.min(1, (now - began) / D);
       paint(t);
       if (t < 1) return requestAnimationFrame(tick);
       stage.style.visibility = '';
-      for (const sh of sheets) sh.el.remove();
+      ghost.remove();
       turning = false;
       if (pinAt) writePin();
       warmNext();
@@ -2243,7 +2840,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
       // The view on either side, since the map turns both ways.
       for (const next of new Set([(VIEW.i + 1) % views.length, (VIEW.i + views.length - 1) % views.length])) for (const level of [best - 1, best]) {
         const v = views[next], t = imageIn(next, g.x, g.z);
-        const f = 2 ** (level - top), size = 1024;
+        const f = 2 ** (level - top), size = M.tileSize ?? 1024;
         const [x0, x1] = [(t.x - b.width / 2) * f, (t.x + b.width / 2) * f].map((q) => Math.floor(Math.max(0, q) / size));
         const [y0, y1] = [(t.y - b.height / 2) * f, (t.y + b.height / 2) * f].map((q) => Math.floor(Math.max(0, q) / size));
         for (const url of [v.tiles, v.objects].filter(Boolean)) {
@@ -2368,16 +2965,16 @@ Work step by step, check the licences of the data you use, and ask me about the 
   });
   applyLang();
 
-  // Evening, remembered like the music.
+  // Night or day by hand. The map follows the real sun; the moon button turns to night by day and to day by night,
+  // and a second click goes back to the sun. The choice lasts for this visit: next time the sky is the real one again.
   const eveningBtn = document.getElementById('evening');
-  function setEvening(on, remember) {
-    evening = on;
-    document.body.classList.toggle('evening', on);
-    eveningBtn.setAttribute('aria-pressed', String(on));
-    if (remember) try { localStorage.setItem('evening', on ? '1' : '0'); } catch {}
-  }
-  eveningBtn.addEventListener('click', () => setEvening(!evening, true));
-  try { if (localStorage.getItem('evening') === '1') setEvening(true, false); } catch {}
+  eveningBtn.addEventListener('click', () => {
+    const real = isDark(sunAt(unix()).el), now = skyWant ? skyWant === 'night' : real;
+    skyWant = now === real ? (real ? 'day' : 'night') : null;
+    try { skyWant ? sessionStorage.setItem('sky', skyWant) : sessionStorage.removeItem('sky'); } catch {}
+    if (skyGoal) readSky();
+  });
+  try { skyWant = { night: 'night', day: 'day' }[sessionStorage.getItem('sky')] || null; } catch {}
 </script>
 </body>
 </html>

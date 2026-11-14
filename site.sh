@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 # Cut the rendered map into Deep Zoom pyramids and assemble site/, without rendering anything.
-#   ./site.sh              from out/full-4.png, and out/full-4-v<look>.png for the other views in scripts/config.py
+#   ./site.sh              from out/full-8.png, and out/full-8-v<look>.png for the other views in scripts/config.py
 # Every run writes the tiles to a fresh folder (tiles-<stamp>/), named in map.json, so browsers never mix cached
 # tiles of an older version with a new one.
 set -euo pipefail
 builtin cd "$(dirname "$0")"
-SCALE="${SCALE:-4}"
+SCALE="${SCALE:-8}"
 SITE=site
+# Tiles of 512 pixels a side: a phone fetches and keeps only what is near its screen. The viewer reads the size
+# from map.json.
+TILE=512
+QUALITY=88
 VIEWS=$(builtin cd scripts && python3 -c "from config import VIEWS; print(*VIEWS)")
 
 stamp=$(date +%Y%m%d-%H%M%S)
 rm -rf "$SITE" && mkdir -p "$SITE/tiles-$stamp"
 
 pyramid() {  # image, name under tiles-<stamp>/
-  vips dzsave "$1" "$SITE/tiles-$stamp/$2" --tile-size 1024 --overlap 0 --suffix '.webp[Q=90]'
+  vips dzsave "$1" "$SITE/tiles-$stamp/$2" --tile-size "$TILE" --overlap 0 --suffix ".webp[Q=$QUALITY]"
   rm -f "$SITE/tiles-$stamp/$2.dzi" "$SITE/tiles-$stamp/$2_files/vips-properties.xml"
 }
 
@@ -33,10 +37,11 @@ for look in $VIEWS; do
   fi
 done
 
-python3 - "$SCALE" "$stamp" "$SITE" $VIEWS <<'PY'
+python3 - "$SCALE" "$stamp" "$SITE" "$TILE" $VIEWS <<'PY'
 import json, os, sys
-scale, stamp, site, *views = sys.argv[1:]
+scale, stamp, site, tile, *views = sys.argv[1:]
 m = json.load(open(f"out/tiles-{scale}/layout.json"))
+m["tileSize"], m["overlap"] = int(tile), 0
 m["views"] = []
 for look in views:
     base = f"tiles-{stamp}/" + ("" if look == "45" else f"v{look}/")
