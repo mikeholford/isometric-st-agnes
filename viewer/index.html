@@ -1466,22 +1466,35 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
   // The sheet for the view on screen, as sharp as the zoom asks for (device pixels to the metre), or till that
   // one has arrived the sharpest smaller one that has.
-  function sheetFor(art, perMetre) {
+  // A mover's pictures come either as one sheet to a view (the Land Rover) or, where there are many moments of a
+  // walk, as a small sheet to each way it can head (the giant): then `way` says which. The big ones are let go again
+  // a while after they were last drawn, since a browser holds every picture unpacked.
+  function sheetFor(art, perMetre, way = null) {
     const info = art.info;
     if (!info || !info.looks.includes(VIEW.look)) return null;
     const want = info.sizes.find((size) => size >= perMetre * 0.95) || info.sizes[info.sizes.length - 1];
+    const fetchSheet = (size, w) => {
+      const key = `${VIEW.look}-${size}-${w}`;
+      let sheet = art.sheets.get(key);
+      if (!sheet) {
+        sheet = { img: new Image(), size, ready: false, used: clock };
+        sheet.img.onload = () => (sheet.ready = true);
+        sheet.img.src = `sprites/${art.folder}/` + info.file.replace('{look}', VIEW.look).replace('{size}', size).replace('{way}', w);
+        art.sheets.set(key, sheet);
+        if (size > info.sizes[0]) for (const [k, old] of art.sheets) if (old.size > info.sizes[0] && clock - old.used > 30) art.sheets.delete(k);
+      }
+      sheet.used = clock;
+      return sheet;
+    };
+    if (way !== null) { // the ways to either side too, so that a turn finds its pictures waiting
+      for (const w of [(way + 1) % info.ways, (way + info.ways - 1) % info.ways]) fetchSheet(info.sizes[0], w), fetchSheet(want, w);
+    }
     let best = null;
     for (const size of info.sizes) {
       if (size > want) break;
-      const key = `${VIEW.look}-${size}`;
-      let sheet = art.sheets.get(key);
-      if (!sheet && (size === want || size === info.sizes[0])) {
-        sheet = { img: new Image(), size, ready: false };
-        sheet.img.onload = () => (sheet.ready = true);
-        sheet.img.src = `sprites/${art.folder}/` + info.file.replace('{look}', VIEW.look).replace('{size}', size);
-        art.sheets.set(key, sheet);
-      }
-      if (sheet?.ready) best = sheet;
+      if (size !== want && size !== info.sizes[0]) continue;
+      const sheet = fetchSheet(size, way);
+      if (sheet.ready) best = sheet;
     }
     return best;
   }
@@ -2333,20 +2346,32 @@ Work step by step, check the licences of the data you use, and ask me about the 
     }
   }
   // He is drawn from pictures of the giant built in Blender (deep/models/bolster.py --sprites), as the Land Rover
-  // is: a sheet to each view, a column to each way he can walk, a row to each of eight moments of a stride. Which
-  // moment follows from the step he is in, the same one the blocks below work from (k and ph), so his feet come down
-  // when and where they always did: a stride begins as his left foot swings through. Till the pictures have come, or
-  // where there are none, he is drawn from blocks as before. His shadow is still cast from the blocks.
+  // is: to each view and each way he can walk a small sheet of the moments of a stride. Which moment follows from
+  // the step he is in, the same one the blocks below work from (k and ph), and the legs in the pictures were posed
+  // by the same rule, so his feet come down when and where they always did: his left foot swings on an odd step.
+  // A step of his takes nearly two seconds, so even two dozen moments to a stride would stutter: every frame is a
+  // blend of the two moments it lies between. Till the pictures have come, or where there are none, he is drawn
+  // from blocks as before. His shadow is still cast from the blocks.
+  const blend = document.createElement('canvas');
   function drawBolsterPicture(ctx, g) {
-    const sheet = sheetFor(GIANT_ART, ctx.getTransform().a * M.scale);
-    if (!sheet) return false;
-    const info = GIANT_ART.info, [hx, hz] = headingAt(g.leg, g.d);
+    const info = GIANT_ART.info;
+    if (!info) return false;
+    const [hx, hz] = headingAt(g.leg, g.d);
     const way = (((Math.round((Math.atan2(hx, -hz) / (2 * Math.PI)) * info.ways) % info.ways) + info.ways) % info.ways);
-    const stride = ((g.k % 2 ? 0.75 : 0.25) + g.ph * 0.5) % 1; // the foot of an odd step is his left
-    const moment = Math.round(stride * info.frames) % info.frames;
+    const sheet = sheetFor(GIANT_ART, ctx.getTransform().a * M.scale, way);
+    if (!sheet) return false;
+    const at = (((g.k % 2 ? 0 : 0.5) + g.ph * 0.5) % 1) * info.frames, a = Math.floor(at) % info.frames, b = (a + 1) % info.frames, t = at - Math.floor(at);
     const cell = info.metres * sheet.size, size = info.metres * M.scale, [px, py] = toPx(g.x, g.z, info.rise);
+    if (blend.width !== cell) blend.width = blend.height = cell;
+    const mix = blend.getContext('2d');
+    mix.globalCompositeOperation = 'copy'; // the one moment at its share, then the other added to it: a true blend
+    mix.globalAlpha = 1 - t;
+    mix.drawImage(sheet.img, (a % info.across) * cell, Math.floor(a / info.across) * cell, cell, cell, 0, 0, cell, cell);
+    mix.globalCompositeOperation = 'lighter';
+    mix.globalAlpha = t;
+    mix.drawImage(sheet.img, (b % info.across) * cell, Math.floor(b / info.across) * cell, cell, cell, 0, 0, cell, cell);
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(sheet.img, way * cell, moment * cell, cell, cell, px - size / 2, py - size / 2, size, size);
+    ctx.drawImage(blend, 0, 0, cell, cell, px - size / 2, py - size / 2, size, size);
     return true;
   }
   function drawBolster(ctx, g) {

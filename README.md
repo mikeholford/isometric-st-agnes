@@ -70,7 +70,7 @@ uv run deep/models/defender.py --sprites   the sheets for the viewer, in out/spr
 ./site.sh                                  puts them into site/sprites/
 ```
 
-Bolster is the second. He is built after the giant of the village's Bolster Festival (`deep/models/bolster.py`), on joints, and rendered walking: sixteen ways, eight moments of a stride to each. The viewer picks the moment from the step he is in, so his feet come down when and where they always did, and it still casts his shadow itself, from where the sun really is. He is the same giant at every zoom, far out on the flat map and close up in a deep place.
+Bolster is the second. He is built after the giant of the village's Bolster Festival (`deep/models/bolster.py`), on joints, and rendered walking: sixteen ways, twenty-four moments of a stride to each, his legs posed by the rule the viewer has always walked him by. The viewer takes the moment from the step he is in, so his feet come down when and where they always did, and since one of his steps takes nearly two seconds it blends each frame from the two moments it lies between. It still casts his shadow itself, from where the sun really is. He is the same giant at every zoom, far out on the flat map and close up in a deep place.
 
 ```
 uv run deep/models/bolster.py --sprites    the sheets for the viewer, in out/sprites/bolster/
