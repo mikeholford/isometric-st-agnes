@@ -68,6 +68,7 @@ json.dump(m, open(f"{site}/map.json", "w"))
 PY
 cp viewer/index.html data/build/places.json data/build/hotspots.json data/build/routes.json data/build/traffic.json data/build/roads.json data/build/height.bin "$SITE/"
 [ -f viewer/og.png ] && cp viewer/og.png "$SITE/"
+[ -f viewer/bolster-caught.webp ] && cp viewer/bolster-caught.webp "$SITE/"  # his portrait on the card of a find
 [ -d data/build/photos ] && cp -r data/build/photos "$SITE/photos"
 [ -d viewer/music ] && cp -r viewer/music "$SITE/music"
 # Places rendered deep (deep/scene.py): their tiles, and the list of them, which is empty when there are none.
