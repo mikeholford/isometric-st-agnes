@@ -19,6 +19,13 @@ a step. So one figure gives every picture of a walk.
   uv run deep/models/bolster.py --only turn      just one of them: turn, walk or map
   uv run deep/models/bolster.py --place 1335,930,200
                                                  stood in the picture of a deep place, as defender.py does
+  uv run deep/models/bolster.py --sprites        him for the viewer to walk about: from each of the map's four views,
+                                                 walking sixteen ways, twenty-four moments of a stride to each, as
+                                                 small sheets in out/sprites/bolster/ (site.sh takes them from there).
+                                                 Without a shadow: the viewer casts his from where the sun really is.
+                                                 It is an hour's work and can be cut short: every picture is kept
+                                                 (out/sprites/bolster-cells/) and not made twice. --part 0/3 makes
+                                                 a third of them, to run three at once; the last to end joins them
   --samples 64    rays through every pixel
 
 He faces along x, y is to his left, z is up, in metres, feet on the ground at the middle.
@@ -31,8 +38,9 @@ from mathutils import Matrix, Vector
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from defender import ROOT, arg, flag, ground, heading, linear, map_camera, stage  # noqa: E402
 
-HIP, SHOULDER = 2.25, 4.2  # the joints above the ground when he stands
-THIGH, SHIN, UPPER, FORE = 1.02, 1.0, 1.08, 0.95
+HIP, SHOULDER = 2.5, 4.2  # the joints above the ground when he stands
+THIGH, SHIN, UPPER, FORE = 1.15, 1.12, 1.08, 0.95
+PACE = 3.0  # the length of a step: the map gives him 3.5 m on the level, more than these legs can do without the splits
 SOLE = 0.26  # the ankle above the sole
 Z = Vector((0, 0, 1))
 
@@ -240,32 +248,52 @@ class Batch:
 
 
 def pose(step=None):
-    """Where his joints are. `step` runs from 0 to 1 over two paces, the left leg leading; None is standing still
-    with the arms a little out, as on the sheet of his four sides. A leg swings from the hip, bends at the knee as it
-    comes through, and lands on its heel; the arms swing against the legs. Whichever foot is lowest is on the ground,
-    and that alone makes him rise and sink as he walks."""
-    walking = step is not None
-    out = {'legs': {}, 'arms': {}}
-    low = 0.0
-    for s, lead in ((1, 0.0), (-1, 0.5)):
-        p = 2 * math.pi * ((step or 0.0) + lead)
-        swing = math.radians(27) * math.sin(p) if walking else 0.0
-        bend = math.radians(5) + (math.radians(50) * max(0.0, math.cos(p)) if walking else 0.0)
-        toe_up = math.radians(17) * math.sin(p) ** 3 if walking else 0.0
+    """Where his joints are. `step` runs from 0 to 1 over a stride of two paces: in the first half his left foot is
+    in the air, in the second his right. None is standing still with the arms a little out, as on the sheet of his
+    four sides.
+
+    The feet do what the viewer has always had them do (bolsterBody in viewer/index.html), so that a foot that is
+    down stays where it is on the road while he goes over it: the standing foot goes back under him at an even pace,
+    the other stays down for the first seventh of the step while the weight comes over, then swings through, slow at
+    both ends, heel up first, toes up to land. The hips sink with both feet down and rise over the standing leg. The
+    knees are found from where hip and ankle are."""
+    out = {'legs': {}, 'arms': {}, 'lift': 0.0}
+    if step is None:
+        for s in (-1, 1):
+            hip = Vector((0, s * 0.43, HIP))
+            knee = hip + THIGH * Vector((math.sin(0.04), 0, -math.cos(0.04)))
+            out['legs'][s] = (hip, knee, Vector((0, s * 0.43, SOLE)), Matrix.Identity(4))
+            shoulder = Vector((0, s * 1.2, SHOULDER))
+            elbow = shoulder + UPPER * Vector((0, s * 0.24, -1)).normalized()
+            wrist = elbow + FORE * Vector((math.sin(0.28), s * 0.15, -math.cos(0.28))).normalized()
+            out['arms'][s] = (shoulder, elbow, wrist)
+        return out
+    step %= 1.0
+    air, ph = (1 if step < 0.5 else -1), (step * 2) % 1.0
+    u = min(1.0, max(0.0, (ph - 0.14) / 0.86))
+    go = (1 - math.cos(math.pi * u)) / 2
+    reach = THIGH + SHIN
+    drop = 0.8 * (reach - math.sqrt(reach * reach - PACE * PACE / 4)) * (1 + math.cos(2 * math.pi * ph)) / 2
+    out['lift'] = -drop
+    tilt = math.sin(math.pi * u) * (0.5 * u - 0.55 * (1 - u)) - 0.35 * (1 - u) ** 3 if u > 0 else -0.35 * ph / 0.14
+    feet = {air: (-PACE / 2 + 2 * PACE * go - PACE * ph, 0.42 * math.sin(math.pi * u) ** 1.3, tilt), -air: (PACE / 2 - PACE * ph, 0.0, 0.0)}
+    for s in (-1, 1):
+        x, up_, toes = feet[s]
         hip = Vector((0, s * 0.43, HIP))
-        knee = hip + THIGH * Vector((math.sin(swing), 0, -math.cos(swing)))
-        ankle = knee + SHIN * Vector((math.sin(swing - bend), 0, -math.cos(swing - bend)))
-        turn = Matrix.Rotation(-toe_up, 4, 'Y')
-        low = min(low, *((ankle + turn.to_3x3() @ Vector((x, 0, -SOLE))).z for x in (-0.32, 0.9)))  # heel and toe
-        out['legs'][s] = (hip, knee, ankle, turn)
-        reach = -math.radians(21) * math.sin(p) if walking else 0.0
-        elbow_bend = math.radians(16) + (math.radians(18) * max(0.0, -math.sin(p)) if walking else 0.0)
-        away = 0.1 if walking else 0.24  # how far the arm hangs from the body
+        # The ankle: above the sole, and higher when the foot is tipped, so that neither toe nor heel goes into the road.
+        want = Vector((x, s * 0.43, drop + SOLE + up_ + max(0.0, -toes) * 0.75 + max(0.0, toes) * 0.3))
+        d = min((want - hip).length, reach - 0.002)
+        ankle = hip + (want - hip).normalized() * d
+        along = math.atan2(ankle.x - hip.x, hip.z - ankle.z)  # the leg's angle forward of straight down
+        bend = math.acos(max(-1.0, min(1.0, (THIGH * THIGH + d * d - SHIN * SHIN) / (2 * THIGH * d))))
+        knee = hip + THIGH * Vector((math.sin(along + bend), 0, -math.cos(along + bend)))  # knees bend forward
+        out['legs'][s] = (hip, knee, ankle, Matrix.Rotation(-toes, 4, 'Y'))
+        swing = s * math.radians(21) * math.cos(2 * math.pi * step)  # an arm goes forward as the leg on its side goes back
+        elbow_bend = math.radians(16) + math.radians(18) * max(0.0, swing / math.radians(21))
         shoulder = Vector((0, s * 1.2, SHOULDER))
-        elbow = shoulder + UPPER * Vector((math.sin(reach), s * away, -math.cos(reach))).normalized()
-        wrist = elbow + FORE * Vector((math.sin(reach + elbow_bend), s * away * 0.6, -math.cos(reach + elbow_bend))).normalized()
+        elbow = shoulder + UPPER * Vector((math.sin(swing), s * 0.1, -math.cos(swing))).normalized()
+        wrist = elbow + FORE * Vector((math.sin(swing + elbow_bend), s * 0.06, -math.cos(swing + elbow_bend))).normalized()
         out['arms'][s] = (shoulder, elbow, wrist)
-    out['lift'] = -low  # the legs were hung from hips at standing height: now set him down on his lowest foot
     return out
 
 
@@ -506,6 +534,56 @@ def main():
         scene.camera = ob
         scene.render.resolution_x, scene.render.resolution_y = wide, high
 
+    if flag('sprites'):
+        # For the viewer: to each of the map's views and each way he can walk (north first, a sixteenth of a turn
+        # further in each) a small sheet of the moments of a stride, six to a row. Small sheets, because a browser
+        # holds a picture unpacked: all of him in one would be hundreds of megabytes on a phone, and this way it
+        # holds only the way he is walking. The picture is aimed at his middle, RISE metres up, so that little of it
+        # is empty; the viewer knows to set it that much above the spot he stands on.
+        import json, time
+        out, cells = ROOT + '/out/sprites/bolster', ROOT + '/out/sprites/bolster-cells'
+        os.makedirs(out, exist_ok=True)
+        os.makedirs(cells, exist_ok=True)
+        metres, sharp, ways, frames, across, rise, looks = 9.0, 48, 16, 24, 6, 3.2, (45, 135, 225, 315)
+        cell = round(metres * sharp)
+        part, parts = [int(v) for v in arg('part', '0/1').split('/')]
+        name = lambda look, w, f: f'{cells}/{look}-{w}-{f}.png'
+        began = time.time()
+        for f in range(frames):
+            todo = [(look, w) for look in looks for w in range(ways) if not os.path.exists(name(look, w, f))]
+            if f % parts != part or not todo:
+                continue
+            clear()
+            root = build(f / frames)
+            ground().visible_camera = False  # the road still throws its light up at him, and is not in the picture
+            for look in looks:
+                for ob in [ob for ob in bpy.data.objects if ob.type == 'CAMERA']:
+                    bpy.data.objects.remove(ob)
+                map_camera(look, metres, cell)
+                scene.camera.location.z += rise
+                for w in range(ways):
+                    if (look, w) in todo:
+                        heading(root, 360 / ways * w)
+                        render(name(look, w, f) + '.part.png')
+                        os.replace(name(look, w, f) + '.part.png', name(look, w, f))
+            print('moment', f + 1, 'of', frames, 'done,', round((time.time() - began) / 60), 'minutes in', flush=True)
+        if not all(os.path.exists(name(look, w, f)) for look in looks for w in range(ways) for f in range(frames)):
+            print('not every picture is there yet: the sheets are joined by the run that finds them all')
+            return
+        for old in os.listdir(out):
+            os.remove(f'{out}/{old}')
+        for look in looks:
+            for w in range(ways):
+                sheet = Image.new('RGBA', (cell * across, cell * (frames // across)), (0, 0, 0, 0))
+                for f in range(frames):
+                    sheet.paste(Image.open(name(look, w, f)), (cell * (f % across), cell * (f // across)))
+                for size in (48, 24, 12):
+                    small = sheet if size == sharp else sheet.resize((sheet.width * size // sharp, sheet.height * size // sharp), Image.LANCZOS)
+                    small.save(f'{out}/bolster-{look}-{size}-{w}.webp', quality=86, method=4)
+        json.dump({'metres': metres, 'rise': rise, 'ways': ways, 'frames': frames, 'across': across, 'sizes': [12, 24, 48], 'looks': list(looks),
+                   'file': 'bolster-{look}-{size}-{way}.webp'}, open(f'{out}/sprite.json', 'w'))
+        print('sheets joined')
+        return
     if place:
         onto = Image.open(arg('onto', ROOT + '/out/deep/churchtown-45/picture.jpg')).convert('RGB')
         per_metre, metres = float(arg('scale', '32')), 16.0
@@ -551,7 +629,7 @@ def main():
         sheet = Image.new('RGB', (6 * 520, 800), (176, 176, 176))
         for i in range(6):
             clear()
-            build(i / 6 * 0.5 + 0.02)
+            build(i / 6)
             ground((176, 176, 176))
             flat_camera(-90, 7.4, 520, 800)
             render(f'{out}/walk-{i}.png')
@@ -560,7 +638,7 @@ def main():
         sheet.save(f'{out}/walk.png')
     if only in ('', 'map'):  # as the map sees him, walking eight ways, with his shadow
         clear()
-        root = build(0.1)
+        root = build(0.2)
         ground().is_shadow_catcher = True
         map_camera(45, 13.0, 640)
         sheet = Image.new('RGB', (640 * 4, 640 * 2), (112, 114, 112))

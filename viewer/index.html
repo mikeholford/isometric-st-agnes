@@ -271,7 +271,7 @@
   #info .frame { height: 200px; }
   /* A find: his portrait beside the news, and under it the picture of the map taken as he was caught. */
   #bolster .caught { display: flex; gap: 12px; align-items: center; }
-  #bolster-art { width: 84px; height: 84px; flex: none; border-radius: 50%; border: 2px solid #c9b48a; background: #e9dec6; object-fit: cover; }
+  #bolster-art { width: 112px; height: 112px; flex: none; border-radius: 50%; border: 2px solid #c9b48a; background: #e9dec6; object-fit: cover; }
   #bolster .caught p { margin-top: 4px; }
   #bolster-proof .frame { height: auto; max-height: 34vh; }
   #bolster-proof img { cursor: default; }
@@ -482,7 +482,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
 <section id="bolster" class="card" hidden aria-live="polite" aria-label="Bolster the giant">
   <div class="card-head"><span>Bolster the giant</span><span id="bolster-count"></span></div>
   <div class="caught">
-    <img id="bolster-art" src="bolster-caught.webp" alt="Bolster, caught in the act" width="84" height="84">
+    <img id="bolster-art" src="bolster-caught.webp" alt="Bolster, caught, with a grin and a wave" width="112" height="112">
     <div><h2 id="bolster-title"></h2><p id="bolster-where"></p></div>
   </div>
   <figure id="bolster-proof" hidden><div class="frame"><img id="bolster-shot" alt="The map at the moment you found him, with Bolster on it"></div><figcaption>The map as it stood when you found him. Yours to keep, and to show.</figcaption></figure>
@@ -1446,8 +1446,12 @@ Work step by step, check the licences of the data you use, and ask me about the 
   // with it. The sheets come in three sizes (sprite.json): the small one is fetched with the page, the larger
   // ones only when the zoom asks for them, so a phone that never zooms in never pays for them. It sets out from
   // the church, drives like any other car, and comes back in at the edge of the map when it has driven off it.
-  const ROVER = { info: null, sheets: new Map() };
-  fetch('sprites/defender/sprite.json').then((r) => (r.ok ? r.json() : null)).then((info) => { ROVER.info = info; }).catch(() => {});
+  const pictured = (folder) => {
+    const art = { folder, info: null, sheets: new Map() };
+    fetch(`sprites/${folder}/sprite.json`).then((r) => (r.ok ? r.json() : null)).then((info) => { art.info = info; }).catch(() => {});
+    return art;
+  };
+  const ROVER = pictured('defender'), GIANT_ART = pictured('bolster');
   function addRover() {
     const church = gridToLocal(172029, 50735);
     let start = -1, near = Infinity;
@@ -1462,28 +1466,41 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
   // The sheet for the view on screen, as sharp as the zoom asks for (device pixels to the metre), or till that
   // one has arrived the sharpest smaller one that has.
-  function roverSheet(perMetre) {
-    const info = ROVER.info;
+  // A mover's pictures come either as one sheet to a view (the Land Rover) or, where there are many moments of a
+  // walk, as a small sheet to each way it can head (the giant): then `way` says which. The big ones are let go again
+  // a while after they were last drawn, since a browser holds every picture unpacked.
+  function sheetFor(art, perMetre, way = null) {
+    const info = art.info;
     if (!info || !info.looks.includes(VIEW.look)) return null;
     const want = info.sizes.find((size) => size >= perMetre * 0.95) || info.sizes[info.sizes.length - 1];
+    const fetchSheet = (size, w) => {
+      const key = `${VIEW.look}-${size}-${w}`;
+      let sheet = art.sheets.get(key);
+      if (!sheet) {
+        sheet = { img: new Image(), size, ready: false, used: clock };
+        sheet.img.onload = () => (sheet.ready = true);
+        sheet.img.src = `sprites/${art.folder}/` + info.file.replace('{look}', VIEW.look).replace('{size}', size).replace('{way}', w);
+        art.sheets.set(key, sheet);
+        if (size > info.sizes[0]) for (const [k, old] of art.sheets) if (old.size > info.sizes[0] && clock - old.used > 30) art.sheets.delete(k);
+      }
+      sheet.used = clock;
+      return sheet;
+    };
+    if (way !== null) { // the ways to either side too, so that a turn finds its pictures waiting
+      for (const w of [(way + 1) % info.ways, (way + info.ways - 1) % info.ways]) fetchSheet(info.sizes[0], w), fetchSheet(want, w);
+    }
     let best = null;
     for (const size of info.sizes) {
       if (size > want) break;
-      const key = `${VIEW.look}-${size}`;
-      let sheet = ROVER.sheets.get(key);
-      if (!sheet && (size === want || size === info.sizes[0])) {
-        sheet = { img: new Image(), size, ready: false };
-        sheet.img.onload = () => (sheet.ready = true);
-        sheet.img.src = 'sprites/defender/' + info.file.replace('{look}', VIEW.look).replace('{size}', size);
-        ROVER.sheets.set(key, sheet);
-      }
-      if (sheet?.ready) best = sheet;
+      if (size !== want && size !== info.sizes[0]) continue;
+      const sheet = fetchSheet(size, way);
+      if (sheet.ready) best = sheet;
     }
     return best;
   }
   // Draws the Land Rover where the car is and says so; says no while there is no picture of it yet.
   function drawRover(ctx, x, z, dx, dz) {
-    const sheet = roverSheet(ctx.getTransform().a * M.scale);
+    const sheet = sheetFor(ROVER, ctx.getTransform().a * M.scale);
     if (!sheet) return false;
     const info = ROVER.info, turn = (Math.atan2(dx, -dz) / (2 * Math.PI)) * info.ways; // north is up the map's z, east along x
     const i = ((Math.round(turn) % info.ways) + info.ways) % info.ways;
@@ -2328,8 +2345,37 @@ Work step by step, check the licences of the data you use, and ask me about the 
       }
     }
   }
+  // He is drawn from pictures of the giant built in Blender (deep/models/bolster.py --sprites), as the Land Rover
+  // is: to each view and each way he can walk a small sheet of the moments of a stride. Which moment follows from
+  // the step he is in, the same one the blocks below work from (k and ph), and the legs in the pictures were posed
+  // by the same rule, so his feet come down when and where they always did: his left foot swings on an odd step.
+  // A step of his takes nearly two seconds, so even two dozen moments to a stride would stutter: every frame is a
+  // blend of the two moments it lies between. Till the pictures have come, or where there are none, he is drawn
+  // from blocks as before. His shadow is still cast from the blocks.
+  const blend = document.createElement('canvas');
+  function drawBolsterPicture(ctx, g) {
+    const info = GIANT_ART.info;
+    if (!info) return false;
+    const [hx, hz] = headingAt(g.leg, g.d);
+    const way = (((Math.round((Math.atan2(hx, -hz) / (2 * Math.PI)) * info.ways) % info.ways) + info.ways) % info.ways);
+    const sheet = sheetFor(GIANT_ART, ctx.getTransform().a * M.scale, way);
+    if (!sheet) return false;
+    const at = (((g.k % 2 ? 0 : 0.5) + g.ph * 0.5) % 1) * info.frames, a = Math.floor(at) % info.frames, b = (a + 1) % info.frames, t = at - Math.floor(at);
+    const cell = info.metres * sheet.size, size = info.metres * M.scale, [px, py] = toPx(g.x, g.z, info.rise);
+    if (blend.width !== cell) blend.width = blend.height = cell;
+    const mix = blend.getContext('2d');
+    mix.globalCompositeOperation = 'copy'; // the one moment at its share, then the other added to it: a true blend
+    mix.globalAlpha = 1 - t;
+    mix.drawImage(sheet.img, (a % info.across) * cell, Math.floor(a / info.across) * cell, cell, cell, 0, 0, cell, cell);
+    mix.globalCompositeOperation = 'lighter';
+    mix.globalAlpha = t;
+    mix.drawImage(sheet.img, (b % info.across) * cell, Math.floor(b / info.across) * cell, cell, cell, 0, 0, cell, cell);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(blend, 0, 0, cell, cell, px - size / 2, py - size / 2, size, size);
+    return true;
+  }
   function drawBolster(ctx, g) {
-    drawBlocks(ctx, bolsterBody(g));
+    if (!drawBolsterPicture(ctx, g)) drawBlocks(ctx, bolsterBody(g));
   }
 
   // His shadow, cast by the real sun. The shadow of a point lands where the sunbeam through it meets the land: down
