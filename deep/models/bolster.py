@@ -93,6 +93,91 @@ def matter(name, colour, rough=0.8, other=None, amount=0.5, grain=3.0, bump=0.3,
     return m
 
 
+def granite(name, colour=(140, 132, 120), lichen=(168, 120, 56), moss=(104, 108, 70)):
+    """Weathered stone: grey and speckled, with patches of ochre lichen and a little moss, and dark cracks."""
+    m = matter(name, colour, 0.92, other=lichen, amount=0.9, grain=1.7, bump=0.0, grime=0.9)
+    nt = m.node_tree
+    b = nt.nodes['Principled BSDF']
+    link = nt.links.new
+    where = next(n for n in nt.nodes if n.bl_idname == 'ShaderNodeTexCoord').outputs['Object']
+
+    def new(kind, **props):
+        n = nt.nodes.new(kind)
+        for k, v in props.items():
+            setattr(n, k, v)
+        return n
+
+    def ramp(source, lo, hi, out_lo, out_hi):
+        n = new('ShaderNodeMapRange')
+        for i, v in zip((1, 2, 3, 4), (lo, hi, out_lo, out_hi)):
+            n.inputs[i].default_value = v
+        link(source, n.inputs[0])
+        return n.outputs[0]
+
+    def noise(scale, detail=8.0):
+        n = new('ShaderNodeTexNoise')
+        n.inputs['Scale'].default_value, n.inputs['Detail'].default_value = scale, detail
+        link(where, n.inputs['Vector'])
+        return n.outputs['Fac']
+
+    def towards(amount_, colour_socket, colour_):
+        n = new('ShaderNodeMixRGB')
+        link(amount_, n.inputs[0])
+        link(colour_socket, n.inputs[1])
+        n.inputs[2].default_value = colour_
+        return n.outputs[0]
+
+    c = b.inputs['Base Color'].links[0].from_socket
+    c = towards(ramp(noise(3.3), 0.56, 0.7, 0.0, 0.5), c, linear(moss))
+    c = towards(ramp(noise(42.0, 2.0), 0.35, 0.65, 0.35, 0.0), c, (0.012, 0.012, 0.012, 1.0))  # the dark grains in it
+    cells = new('ShaderNodeTexVoronoi', feature='DISTANCE_TO_EDGE')
+    cells.inputs['Scale'].default_value = 1.5
+    link(where, cells.inputs['Vector'])
+    some = new('ShaderNodeMath', operation='MULTIPLY')  # a crack here and there, not a net of them
+    link(ramp(cells.outputs['Distance'], 0.0, 0.014, 1.0, 0.0), some.inputs[0])
+    link(ramp(noise(1.1, 3.0), 0.45, 0.6, 0.0, 1.0), some.inputs[1])
+    crack = some.outputs[0]
+    c = towards(crack, c, (0.02, 0.018, 0.016, 1.0))
+    link(c, b.inputs['Base Color'])
+    height = new('ShaderNodeMath', operation='SUBTRACT')
+    link(noise(9.0), height.inputs[0])
+    link(crack, height.inputs[1])
+    lumps = new('ShaderNodeBump')
+    lumps.inputs['Strength'].default_value, lumps.inputs['Distance'].default_value = 0.9, 0.1
+    link(height.outputs[0], lumps.inputs['Height'])
+    link(lumps.outputs[0], b.inputs['Normal'])
+    return m
+
+
+def carve(name, lumps, material, parent, at, facets=0.14, grain=0.04):
+    """One piece of stone from many lumps that run into each other, some of them taken away again (eye sockets, a
+    mouth, a crease). Then most of its faces are thrown out, so that what is left is flat cuts, as hewn stone has."""
+    mb = bpy.data.metaballs.new(name)
+    mb.resolution = mb.render_resolution = grain
+    clay = bpy.data.objects.new(name + ' clay', mb)
+    bpy.context.scene.collection.objects.link(clay)
+    for centre, radii, take in lumps:
+        el = mb.elements.new(type='ELLIPSOID')
+        el.co, el.radius = centre, 1.74  # at this radius a lump alone comes out the size it was asked for
+        el.size_x, el.size_y, el.size_z = radii
+        el.use_negative, el.stiffness = take, 3.0 if take else 2.0
+    bpy.context.view_layer.update()
+    me = bpy.data.meshes.new_from_object(clay.evaluated_get(bpy.context.evaluated_depsgraph_get()))
+    bpy.data.objects.remove(clay)
+    bpy.data.metaballs.remove(mb)
+    for f in me.polygons:
+        f.use_smooth = False
+    ob = bpy.data.objects.new(name, me)
+    ob.data.materials.append(material)
+    bpy.context.scene.collection.objects.link(ob)
+    ob.modifiers.new('hew', 'DECIMATE').ratio = facets
+    ob.matrix_world = at
+    world = ob.matrix_world.copy()
+    ob.parent = parent
+    ob.matrix_world = world
+    return ob
+
+
 class Batch:
     """Many simple shapes gathered into one object: cones, balls, leaves."""
 
@@ -188,7 +273,7 @@ def build(step=None):
     rnd = random.Random(3)
     root = bpy.data.objects.new('bolster', None)
     bpy.context.scene.collection.objects.link(root)
-    stone = matter('stone', (112, 110, 106), 0.9, other=(142, 108, 64), amount=0.6, grain=2.4, bump=0.8, grime=0.85)
+    stone = granite('stone')
     tunic = matter('crimson cloth', (92, 14, 38), 0.95, grain=14.0, bump=0.12, grime=0.45)
     sleeve = matter('pink cloth', (152, 28, 78), 0.95, grain=14.0, bump=0.12, grime=0.45)
     hem = matter('green cloth', (134, 170, 92), 0.95, grain=14.0, bump=0.14, grime=0.4)
@@ -284,68 +369,73 @@ def build(step=None):
         h.limb((0.2, 0, -0.2), (0.36, s * -0.03, -0.5), 0.085, 0.065, n=8)
         h.done(f'hand {s}', stone, at=Matrix.Translation(wrist + up) @ Z.rotation_difference(-along).to_matrix().to_4x4() @ Matrix.Scale(1.4, 4), parent=root)
 
-    # ---- The head: a slab of stone with a brow, a great nose, cheeks and a jaw. A big head: he is a giant of a tale.
+    # ---- The head: one piece of hewn stone. A heavy brow, a great hooked nose, cheekbones, a jaw, and cut into it
+    # two deep eye sockets and a wide grin. A big head: he is a giant of a tale. It is made where it would be if he
+    # stood still, and then moved with him, so that the lichen stays where it is on his face as he walks.
     K = 1.17
-    at = lambda x, y, z: body(0.06 + (x - 0.06) * K, y * K, 5.02 + (z - 5.15) * K)
+    rest = lambda x, y, z: Vector((0.06 + (x - 0.06) * K, y * K, 5.02 + (z - 5.15) * K))
+    nod = body(0, 0, 5.1) - Vector((0, 0, 5.1))
+    at = lambda x, y, z: rest(x, y, z) + nod
     big = lambda *r: tuple(v * K for v in r)
-    head = Batch()
-    head.limb(body(0, 0, 4.2), body(0.05, 0, 4.55), 0.5, 0.46)
-    head.ball(at(0.06, 0, 5.15), big(0.6, 0.68, 0.8), n=28)
-    head.ball(at(0.46, 0, 5.5), big(0.27, 0.64, 0.18))
-    head.ball(at(0.34, 0, 4.5), big(0.38, 0.56, 0.27))
+    lumps = [((0.04, 0, 5.18), (0.56, 0.64, 0.74), False), ((0.0, 0, 4.42), (0.42, 0.46, 0.42), False),  # skull, neck
+             ((0.30, 0, 4.52), (0.36, 0.54, 0.26), False), ((0.52, 0, 4.4), (0.17, 0.26, 0.15), False),  # jaw, chin
+             ((0.5, 0, 5.5), (0.2, 0.6, 0.13), False),  # brow
+             ((0.66, 0, 5.34), (0.13, 0.13, 0.16), False), ((0.82, 0, 5.14), (0.16, 0.15, 0.18), False), ((0.97, 0, 4.94), (0.2, 0.19, 0.18), False),  # nose
+             ((0.56, 0, 4.85), (0.11, 0.38, 0.065), False), ((0.53, 0, 4.55), (0.11, 0.34, 0.065), False),  # lips
+             ((0.7, 0, 4.7), (0.22, 0.36, 0.07), True)]  # the grin
     for s in (-1, 1):
-        head.ball(at(0.42, s * 0.38, 4.98), big(0.24, 0.25, 0.22))
-    head.limb(at(0.6, 0, 5.42), at(0.94, 0, 4.98), 0.16 * K, 0.21 * K, n=12)
-    head.ball(at(0.98, 0, 4.93), big(0.23, 0.21, 0.21))
-    for s in (-1, 1):
-        head.ball(at(0.86, s * 0.15, 4.89), big(0.12, 0.11, 0.1))
-    head.done('head', stone, parent=root)
+        lumps += [((0.56, s * 0.3, 5.5), (0.14, 0.2, 0.11), False), ((0.84, s * 0.16, 4.9), (0.11, 0.1, 0.09), False),  # brow, nostril
+                  ((0.44, s * 0.42, 5.02), (0.2, 0.2, 0.18), False),  # cheekbone
+                  ((0.68, s * 0.27, 5.33), (0.14, 0.13, 0.09), True),  # eye socket
+                  ((0.58, s * 0.36, 4.76), (0.12, 0.08, 0.07), True)]  # the corner of the grin, turned up
+        lumps += [((0.72 - 0.06 * q, s * (0.24 + 0.08 * q), 4.96 - 0.07 * q), (0.05, 0.04, 0.05), True) for q in range(3)]  # a crease from nose to mouth
+        lumps += [((0.58, s * 0.2, 5.72 + 0.06 * s), (0.04, 0.2, 0.025), True)]  # a line across the forehead
+    carve('head', [(tuple(rest(*c)), big(*r), take) for c, r, take in lumps], stone, root, Matrix.Translation(nod))
     face = Batch()
     for s in (-1, 1):
-        face.ball(at(0.6, s * 0.27, 5.31), 0.062 * K, n=12)
+        face.ball(at(0.565, s * 0.27, 5.33), 0.05 * K, n=12)
     face.done('eyes', eye, parent=root)
     teeth = Batch()
-    for k in range(8):  # a grin full of them
-        teeth.ball(at(0.6 - 0.014 * abs(k - 3.5), (k - 3.5) * 0.09, 4.735 + 0.01 * abs(k - 3.5)), big(0.03, 0.05, 0.045), n=8)
-    teeth.done('teeth', tooth, parent=root)
+    for k in range(7):  # a grin full of square teeth, a row above and a row below
+        y = (k - 3) * 0.094
+        teeth.cone(at(0.6 - 0.02 * abs(k - 3), y, 4.7 + 0.012 * abs(k - 3)), at(0.6 - 0.02 * abs(k - 3), y, 4.785 + 0.012 * abs(k - 3)), 0.056 * K, 0.056 * K, n=4)
+    for k in range(6):
+        y = (k - 2.5) * 0.094
+        teeth.cone(at(0.56 - 0.02 * abs(k - 2.5), y, 4.615), at(0.56 - 0.02 * abs(k - 2.5), y, 4.685), 0.052 * K, 0.052 * K, n=4)
+    teeth.done('teeth', tooth, parent=root, smooth=False)
     pit = Batch()
-    pit.ball(at(0.5, 0, 4.7), big(0.115, 0.4, 0.085))
+    pit.ball(at(0.42, 0, 4.7), big(0.14, 0.36, 0.1))
     for s in (-1, 1):
-        pit.ball(at(0.655, s * 0.27, 5.31), 0.028 * K, n=8)
-        pit.ball(at(0.56, s * 0.27, 5.32), big(0.07, 0.12, 0.09))  # the shadow the eye sits in
+        pit.ball(at(0.608, s * 0.265, 5.325), 0.022 * K, n=8)
     pit.done('mouth', dark, parent=root)
 
-    # ---- Straw brows that bristle, a little moustache under the nose and a fringe of beard along the jaw.
+    # ---- Straw brows that bristle, and a fringe of beard along the jaw, longest under the chin.
     whiskers = Batch()
     for s in (-1, 1):
-        for k in range(34):
-            y = s * (0.07 + 0.5 * k / 33)
-            base = at(0.68 - 0.22 * (k / 33) ** 2, y, 5.44)
-            whiskers.cone(base, base + Vector((0.22 + rnd.uniform(-0.05, 0.1), s * rnd.uniform(0.0, 0.16), rnd.uniform(-0.04, 0.1))), 0.03, 0.008, n=5)
-    for k in range(30):
-        y = rnd.uniform(-0.3, 0.3)
-        base = at(0.64 - 0.3 * y * y, y, 4.81)
-        whiskers.cone(base, base + Vector((0.05, y * 0.3, -rnd.uniform(0.03, 0.07))), 0.022, 0.008, n=5)
-    for k in range(120):
+        for k in range(46):
+            y = s * (0.07 + 0.52 * (k % 23) / 22)
+            base = at(0.69 - 0.2 * ((k % 23) / 22) ** 2, y, 5.5 + (0.05 if k >= 23 else 0))
+            whiskers.cone(base, base + Vector((0.2 + rnd.uniform(-0.05, 0.1), s * rnd.uniform(0.02, 0.2), rnd.uniform(0.0, 0.16))), 0.03, 0.008, n=5)
+    for k in range(260):
         t = rnd.uniform(-1, 1)
-        y, x = 0.6 * t, 0.56 - 0.5 * t * t
-        base = at(x + rnd.uniform(-0.04, 0.04), y, 4.42 + 0.3 * t * t)
-        whiskers.cone(base, base + Vector((rnd.uniform(0.0, 0.1), t * 0.1, -rnd.uniform(0.25, 0.5))), 0.03, 0.008, n=5)
+        y, x = 0.6 * t, 0.66 - 0.5 * t * t
+        base = at(x + rnd.uniform(-0.04, 0.04), y, 4.5 + 0.4 * t * t + rnd.uniform(-0.06, 0.04))
+        whiskers.cone(base, base + Vector((rnd.uniform(0.02, 0.14), t * 0.14, -rnd.uniform(0.18, 0.4) * (1.5 - t * t))), 0.03, 0.008, n=5)
     whiskers.done('whiskers', straw, parent=root)
 
     # ---- Long, wild dark hair down his back, and on it the crown: a heap of fern fronds, with flowers among them.
     mane = Batch()
-    for k in range(620):
+    for k in range(1150):
         ang = rnd.uniform(math.radians(58), math.radians(302))  # all round but the face
         z0 = rnd.uniform(5.2, 5.9)
         r0 = 0.64 * math.sqrt(max(0.05, 1 - ((z0 - 5.15) / 0.84) ** 2))
-        reach = lambda r, t_, q_: at(0.04 + r * 0.95 * math.cos(ang) + 0.07 * math.sin(wave + q_ * 2), r * 1.05 * math.sin(ang) + 0.07 * math.cos(wave + q_ * 2.3), t_)
+        reach = lambda r, t_, q_: at(0.04 + r * 0.95 * math.cos(ang) + 0.11 * math.sin(wave + q_ * 2), r * 1.05 * math.sin(ang) + 0.11 * math.cos(wave + q_ * 2.3), t_)
         end, wave = rnd.uniform(3.7, 4.6), rnd.uniform(0, 6.3)
         point = reach(r0, z0, 0)
-        for q in range(5):
-            t = (q + 1) / 5
-            nxt = reach(r0 + 0.3 * t, z0 + (end - z0) * t, q + 1)
-            mane.cone(point, nxt, 0.028 - 0.004 * q, 0.024 - 0.004 * q, n=4)
+        for q in range(9):
+            t = (q + 1) / 9
+            nxt = reach(r0 + 0.36 * t, z0 + (end - z0) * t, (q + 1) * 0.45)
+            mane.cone(point, nxt, 0.018 - 0.0013 * q, 0.0167 - 0.0013 * q, n=4)
             point = nxt
     mane.done('hair', hair, parent=root)
     fronds = [Batch() for _ in fern]
@@ -353,8 +443,9 @@ def build(step=None):
     for k in range(300):
         ang, high = rnd.uniform(0, 2 * math.pi), rnd.uniform(0.0, 1.0) ** 0.7  # where on the top of his head it grows
         ring = 0.66 * math.sqrt(1 - (high * 0.9) ** 2)
-        base = at(0.06 + ring * math.cos(ang), ring * 1.08 * math.sin(ang), 5.45 + 0.62 * high)
-        rise = 0.15 + 1.1 * high + rnd.uniform(-0.25, 0.25)
+        base = at(0.06 + ring * math.cos(ang), ring * 1.08 * math.sin(ang), 5.62 + 0.46 * high)
+        front = max(0.0, math.cos(ang))  # over his face the fronds stand up, so the brow shows
+        rise = 0.15 + 0.55 * front + 1.1 * high + rnd.uniform(-0.25, 0.25)
         way = Vector((math.cos(ang) * math.cos(rise), math.sin(ang) * math.cos(rise), math.sin(rise)))
         length = rnd.uniform(0.5, 1.0)
         f = fronds[k % len(fronds)]
@@ -432,6 +523,18 @@ def main():
         onto.save(f'{out}/placed.png')
         px, py = spots[0][:2]
         onto.crop((int(px - 600), int(py - 440), int(px + 600), int(py + 360))).save(f'{out}/placed-close.png')
+        return
+    if only == 'face':  # close to, from the front and from his right, to hold against the pictures he was made after
+        clear()
+        build(None)
+        sheet = Image.new('RGB', (2 * 800, 900), (176, 176, 176))
+        for i, turn in enumerate((-12, -60)):
+            flat_camera(turn, 2.9, 800, 900)
+            scene.camera.location.z = scene.camera.location.z + 1.95
+            render(f'{out}/face-{i}.png')
+            tile = Image.open(f'{out}/face-{i}.png')
+            sheet.paste(tile, (800 * i, 0), tile)
+        sheet.save(f'{out}/face.png')
         return
     if only in ('', 'turn'):  # his four sides, standing, as on the sheet he was made after
         clear()
