@@ -19,6 +19,10 @@ a step. So one figure gives every picture of a walk.
   uv run deep/models/bolster.py --only turn      just one of them: turn, walk or map
   uv run deep/models/bolster.py --place 1335,930,200
                                                  stood in the picture of a deep place, as defender.py does
+  uv run deep/models/bolster.py --sprites        him for the viewer to walk about: from each of the map's four views,
+                                                 walking sixteen ways, eight moments of a stride to each, as sheets of
+                                                 pictures in out/sprites/bolster/ (site.sh takes them from there).
+                                                 Without a shadow: the viewer casts his from where the sun really is
   --samples 64    rays through every pixel
 
 He faces along x, y is to his left, z is up, in metres, feet on the ground at the middle.
@@ -506,6 +510,40 @@ def main():
         scene.camera = ob
         scene.render.resolution_x, scene.render.resolution_y = wide, high
 
+    if flag('sprites'):
+        # For the viewer: to each of the map's views a sheet, a column to each way he can walk (north first, a
+        # sixteenth of a turn further in each) and a row to each moment of a stride of two paces. The picture is
+        # aimed at his middle, RISE metres up, so that little of it is empty; the viewer knows to set it that much
+        # above the spot he stands on. Three sizes, so a phone far out never loads the big one.
+        import json, time
+        out = ROOT + '/out/sprites/bolster'
+        os.makedirs(out, exist_ok=True)
+        metres, sharp, ways, frames, rise, looks = 9.0, 48, 16, 8, 3.2, (45, 135, 225, 315)
+        cell = round(metres * sharp)
+        sheets = {look: Image.new('RGBA', (cell * ways, cell * frames), (0, 0, 0, 0)) for look in looks}
+        began = time.time()
+        for f in range(frames):
+            clear()
+            root = build(f / frames)
+            ground().visible_camera = False  # the road still throws its light up at him, and is not in the picture
+            for look in looks:
+                for ob in [ob for ob in bpy.data.objects if ob.type == 'CAMERA']:
+                    bpy.data.objects.remove(ob)
+                map_camera(look, metres, cell)
+                scene.camera.location.z += rise
+                for w in range(ways):
+                    heading(root, 360 / ways * w)
+                    render(f'{out}/frame.png')
+                    sheets[look].paste(Image.open(f'{out}/frame.png'), (cell * w, cell * f))
+            print('moment', f + 1, 'of', frames, 'done,', round((time.time() - began) / 60), 'minutes in', flush=True)
+        os.remove(f'{out}/frame.png')
+        for look, sheet in sheets.items():
+            for size in (48, 24, 12):
+                small = sheet if size == sharp else sheet.resize((sheet.width * size // sharp, sheet.height * size // sharp), Image.LANCZOS)
+                small.save(f'{out}/bolster-{look}-{size}.webp', quality=86, method=6)
+        json.dump({'metres': metres, 'rise': rise, 'ways': ways, 'frames': frames, 'sizes': [12, 24, 48], 'looks': list(looks),
+                   'file': 'bolster-{look}-{size}.webp'}, open(f'{out}/sprite.json', 'w'))
+        return
     if place:
         onto = Image.open(arg('onto', ROOT + '/out/deep/churchtown-45/picture.jpg')).convert('RGB')
         per_metre, metres = float(arg('scale', '32')), 16.0

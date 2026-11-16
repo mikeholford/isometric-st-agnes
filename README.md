@@ -70,7 +70,13 @@ uv run deep/models/defender.py --sprites   the sheets for the viewer, in out/spr
 ./site.sh                                  puts them into site/sprites/
 ```
 
-A picture is lit by itself: the car does not darken under a tree or beside a house, and it does not tip on a hill.
+Bolster is the second. He is built after the giant of the village's Bolster Festival (`deep/models/bolster.py`), on joints, and rendered walking: sixteen ways, eight moments of a stride to each. The viewer picks the moment from the step he is in, so his feet come down when and where they always did, and it still casts his shadow itself, from where the sun really is. He is the same giant at every zoom, far out on the flat map and close up in a deep place.
+
+```
+uv run deep/models/bolster.py --sprites    the sheets for the viewer, in out/sprites/bolster/
+```
+
+A picture is lit by itself: the car does not darken under a tree or beside a house, and it does not tip on a hill. Nor does the giant lean into a slope as the one drawn from blocks did.
 
 ## Pipeline
 
