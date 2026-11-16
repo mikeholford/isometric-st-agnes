@@ -269,6 +269,26 @@
   .card .more a { font-weight: 500; color: #8a5a2b; }
   .card a { color: inherit; }
   #info .frame { height: 200px; }
+  /* A find: his portrait beside the news, and under it the picture of the map taken as he was caught. */
+  #bolster .caught { display: flex; gap: 12px; align-items: center; }
+  #bolster-art { width: 84px; height: 84px; flex: none; border-radius: 50%; border: 2px solid #c9b48a; background: #e9dec6; object-fit: cover; }
+  #bolster .caught p { margin-top: 4px; }
+  #bolster-proof .frame { height: auto; max-height: 34vh; }
+  #bolster-proof img { cursor: default; }
+  /* A flag where he was found, till the tab is closed: its pole stands on the spot. */
+  .flag { width: 30px; margin: -40px 0 0 -4px; pointer-events: none; text-align: left; }
+  .flag svg { display: block; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5)); transform-origin: 4px 100%; animation: drop 0.35s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
+  .flag span { position: absolute; left: 12px; top: 22px; padding: 1px 5px; border-radius: 3px; background: #1b1d22cc; color: #f4f1e6; font: 500 10px/1.4 var(--mono); white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { .flag svg { animation: none; } }
+  /* The cheat: where the giant is, for whoever knows to ask (type his name, or open the page with #cheat). */
+  #cheat { top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); z-index: 8; width: min(360px, calc(100vw - 32px)); padding: 12px 14px; display: grid; gap: 8px; }
+  #cheat[hidden] { display: none; }
+  #cheat h2 { margin: 0; font: 600 18px/1.2 var(--display); }
+  #cheat p, #cheat ol { margin: 0; font-size: 13px; line-height: 1.45; }
+  #cheat ol { padding: 0; list-style: none; color: var(--muted); }
+  #cheat ol b { color: var(--fg); font-weight: 500; font-family: var(--mono); }
+  #cheat nav { display: flex; flex-wrap: wrap; gap: 8px; }
+  #cheat nav #cheat-close { margin-left: auto; }
   #info .links { display: flex; flex-wrap: wrap; gap: 4px 16px; }
   /* The buttons stay in view while a long card scrolls under them. */
   .card nav { flex-wrap: wrap; display: flex; gap: 8px; align-items: center; position: sticky; bottom: -14px; padding: 2px 0 14px; margin-bottom: -14px; background: #f4ead6; }
@@ -460,13 +480,29 @@ Work step by step, check the licences of the data you use, and ask me about the 
 </section>
 
 <section id="bolster" class="card" hidden aria-live="polite" aria-label="Bolster the giant">
-  <div class="card-head"><span>BOLSTER THE GIANT</span><span id="bolster-count"></span></div>
-  <h2 id="bolster-title"></h2>
-  <p id="bolster-where"></p>
+  <div class="card-head"><span>Bolster the giant</span><span id="bolster-count"></span></div>
+  <div class="caught">
+    <img id="bolster-art" src="bolster-caught.webp" alt="Bolster, caught in the act" width="84" height="84">
+    <div><h2 id="bolster-title"></h2><p id="bolster-where"></p></div>
+  </div>
+  <figure id="bolster-proof" hidden><div class="frame"><img id="bolster-shot" alt="The map at the moment you found him, with Bolster on it"></div><figcaption>The map as it stood when you found him. Yours to keep, and to show.</figcaption></figure>
   <p id="bolster-text"></p>
   <nav>
+    <button type="button" id="bolster-save" hidden>Save the picture</button>
     <button type="button" id="bolster-copy">Copy the link to this find</button>
     <button type="button" class="close" id="bolster-close">Close</button>
+  </nav>
+</section>
+
+<section id="cheat" class="panel" hidden aria-label="Where Bolster is">
+  <h2>Where Bolster is</h2>
+  <p id="cheat-now"></p>
+  <p id="cheat-gone" hidden></p>
+  <ol id="cheat-next"></ol>
+  <nav>
+    <button type="button" id="cheat-go">Take me to him</button>
+    <button type="button" id="cheat-back" hidden>Show him again</button>
+    <button type="button" id="cheat-close">Close</button>
   </nav>
 </section>
 
@@ -1284,6 +1320,7 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (!viewer || !viewer.world.getItemCount()) return;
     const h = decodeURIComponent(location.hash.slice(1));
     if (/^bolster=/.test(h)) return void openBolsterLink();
+    if (h === 'cheat') return;
     const tour = h.match(/^van-toen(?:-(\d+))?$/);
     if (tour) {
       if (stops.length) goStop((parseInt(tour[1] || '1') || 1) - 1);
@@ -1398,6 +1435,8 @@ Work step by step, check the licences of the data you use, and ask me about the 
     });
     for (let i = 0; i < 3; i++) spawnFlock(0.2 + Math.random() * 0.6);
     addRover();
+    restoreFlags();
+    if (location.hash === '#cheat') openCheat();
     openBolsterLink();
   }
 
@@ -1960,14 +1999,27 @@ Work step by step, check the licences of the data you use, and ask me about the 
   }
   const when = (t) => new Date(t * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   const clockTime = (t) => new Date(t * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  let bolsterLink = '';
-  function showBolsterCard(title, where, text, t, count) {
+  let bolsterLink = '', proof = null;
+  const proofEl = document.getElementById('bolster-proof'), shotEl = document.getElementById('bolster-shot'), saveBtn = document.getElementById('bolster-save');
+  document.getElementById('bolster-art').addEventListener('error', (e) => (e.target.hidden = true));
+  function showBolsterCard(title, where, text, t, count, picture = null) {
     document.getElementById('bolster-title').textContent = title;
     document.getElementById('bolster-where').textContent = where;
     document.getElementById('bolster-text').textContent = text;
     document.getElementById('bolster-count').textContent = count;
     bolsterLink = `${location.origin}${location.pathname}#bolster=${Math.floor(t)}`;
     document.getElementById('bolster-copy').textContent = 'Copy the link to this find';
+    if (proof) URL.revokeObjectURL(proof.url);
+    proof = null;
+    proofEl.hidden = saveBtn.hidden = true;
+    picture?.then((blob) => {
+      if (!blob || bolsterEl.hidden) return;
+      const file = new File([blob], `bolster-${Math.floor(t)}.jpg`, { type: 'image/jpeg' });
+      proof = { file, url: URL.createObjectURL(blob), text: `I found Bolster the giant ${where.replace(/\.$/, '')}.` };
+      shotEl.src = proof.url;
+      proofEl.hidden = saveBtn.hidden = false;
+      saveBtn.textContent = navigator.canShare?.({ files: [file] }) ? 'Share the picture' : 'Save the picture';
+    });
     closeInfo();
     bolsterEl.hidden = false;
   }
@@ -1976,21 +2028,137 @@ Work step by step, check the licences of the data you use, and ask me about the 
     if (marker) unanchor(marker), (marker = null);
     if (/^#bolster=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   }
+  // The proof: a picture of the map as it stands at the moment of the find, the giant in the middle of it, with the
+  // time, the place and the link written under it. It is cut from what is on the screen (drawStack), so it shows
+  // him where he really stood, in the light of that hour. Nothing leaves the browser: the visitor saves or shares it.
+  function proofPicture(g, t, where) {
+    try {
+      const map = viewer.drawer.canvas, W = map.width, H = map.height, dpr = W / Math.max(1, viewer.element.clientWidth);
+      const whole = document.createElement('canvas');
+      whole.width = W, whole.height = H;
+      drawStack(whole.getContext('2d'), W, H);
+      const at = viewer.viewport.imageToViewerElementCoordinates(groundToImage(g.x, g.z, TALL / 2));
+      const w = Math.min(W, Math.round(Math.min(1200, Math.max(800, 600 * dpr)))), h = Math.min(H, Math.round(w * 0.66));
+      const x = Math.max(0, Math.min(W - w, Math.round(at.x * dpr - w / 2))), y = Math.max(0, Math.min(H - h, Math.round(at.y * dpr - h * 0.55)));
+      const k = w / 600, band = Math.round(74 * k), out = document.createElement('canvas');
+      out.width = w, out.height = h + band;
+      const ctx = out.getContext('2d'), fonts = getComputedStyle(document.body).fontFamily;
+      ctx.drawImage(whole, x, y, w, h, 0, 0, w, h);
+      // A ring round him: from far out he is small, and the picture should not need a search of its own.
+      const foot = viewer.viewport.imageToViewerElementCoordinates(groundToImage(g.x, g.z, 0)), head = viewer.viewport.imageToViewerElementCoordinates(groundToImage(g.x, g.z, TALL));
+      const tall = Math.max(26 * k, (foot.y - head.y) * dpr);
+      ctx.beginPath();
+      ctx.ellipse(at.x * dpr - x, at.y * dpr - y, tall * 0.75, tall * 0.95, 0, 0, Math.PI * 2);
+      ctx.lineWidth = 2.5 * k;
+      ctx.strokeStyle = '#1b1d22';
+      ctx.stroke();
+      ctx.lineWidth = 1.5 * k;
+      ctx.strokeStyle = '#f2c14e';
+      ctx.stroke();
+      ctx.fillStyle = '#1b1d22';
+      ctx.fillRect(0, h, w, band);
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = '#f4f1e6';
+      ctx.font = `600 ${Math.round(19 * k)}px ${fonts}`;
+      ctx.fillText('I found Bolster the giant', 14 * k, h + 27 * k);
+      ctx.fillStyle = '#d2b47a';
+      ctx.font = `${Math.round(12.5 * k)}px ${fonts}`;
+      ctx.fillText(`${when(t)}, ${where}`, 14 * k, h + 46 * k, w - 28 * k);
+      ctx.fillStyle = '#9aa0aa';
+      ctx.fillText(`${location.host}${location.pathname}#bolster=${Math.floor(t)}`, 14 * k, h + 63 * k, w - 28 * k);
+      return new Promise((done) => out.toBlob(done, 'image/jpeg', 0.9));
+    } catch {
+      return null; // no picture is no reason to lose the find
+    }
+  }
+  saveBtn.addEventListener('click', async () => {
+    if (!proof) return;
+    if (navigator.canShare?.({ files: [proof.file] })) {
+      try { await navigator.share({ files: [proof.file], text: proof.text, url: bolsterLink }); } catch {} // closed without sharing: nothing to do
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = proof.url, a.download = proof.file.name;
+    a.click();
+  });
+  // A flag stands where he was found, till the tab is closed, so one can see where one has been lucky.
+  let flags = [];
+  function plantFlag(x, z, t) {
+    const el = document.createElement('div');
+    el.className = 'flag';
+    el.innerHTML = '<svg width="30" height="40" viewBox="0 0 30 40" aria-hidden="true"><path d="M4 2v37" stroke="#f4f1e6" stroke-width="2.4" stroke-linecap="round"/><path d="M5.5 3.5l20 6.5-20 7z" fill="#a8163c" stroke="#f4f1e6" stroke-width="1.2" stroke-linejoin="round"/></svg><span></span>';
+    el.lastChild.textContent = `Found ${clockTime(t)}`;
+    anchor(el, x, z, 0);
+  }
+  function restoreFlags() {
+    try { flags = JSON.parse(sessionStorage.getItem('bolster-flags')) || []; } catch {}
+    for (const [x, z, t] of flags) plantFlag(x, z, t);
+  }
   function foundBolster() {
-    const g = bolsterShown, t = unix();
+    const g = bolsterShown, t = unix(), where = placeName(g.x, g.z);
+    const picture = proofPicture(g, t, where); // before he is gone from the screen
     let finds = 0;
     try { finds = (parseInt(localStorage.getItem('bolster-finds')) || 0) + 1; localStorage.setItem('bolster-finds', finds); localStorage.setItem('bolster-gone', g.n); } catch {}
     goneLeg = g.n;
     document.getElementById('map').classList.remove('over-bolster');
     tip.hidden = true;
-    if (marker) unanchor(marker);
-    marker = document.createElement('div');
-    marker.className = 'marker';
-    anchor(marker, g.x, g.z, 0);
-    showBolsterCard('You found Bolster!', `${when(t)}, ${placeName(g.x, g.z)}.`,
-      `He saw you and he is gone. He walks again at ${clockTime((g.n + 1) * LEG)}, somewhere else on the map. Send the link to a friend: it shows where he stood at this minute.`,
-      t, finds ? `YOUR FINDS: ${finds}` : '');
+    if (marker) unanchor(marker), (marker = null);
+    plantFlag(g.x, g.z, t);
+    flags.push([Math.round(g.x * 10) / 10, Math.round(g.z * 10) / 10, Math.floor(t)]);
+    try { sessionStorage.setItem('bolster-flags', JSON.stringify(flags.slice(-20))); } catch {}
+    showBolsterCard('You found Bolster!', `${when(t)}, ${where}.`,
+      `He saw you and he is gone. A flag marks the spot. He walks again at ${clockTime((g.n + 1) * LEG)}, somewhere else on the map. Send the link to a friend: it shows where he stood at this minute.`,
+      t, finds ? `Your finds: ${finds}` : '', picture);
   }
+  // The cheat: for whoever knows to ask, where he is now and where his next walks begin. Type his name anywhere on
+  // the page, or open it with #cheat. It only reads the clock he already walks by, and changes nothing about him.
+  const cheatEl = document.getElementById('cheat');
+  let cheatTimer = 0;
+  function fillCheat() {
+    const t = unix(), g = bolsterAt(t);
+    if (!g) return;
+    const until = clockTime((g.n + 1) * LEG), hidden = g.n === goneLeg;
+    document.getElementById('cheat-now').textContent = `Just now he is ${placeName(g.x, g.z)}, and he walks on from there till ${until}.`;
+    document.getElementById('cheat-gone').textContent = `You found him on this walk, so he is hidden from you till ${until}.`;
+    document.getElementById('cheat-gone').hidden = document.getElementById('cheat-back').hidden = !hidden;
+    const list = document.getElementById('cheat-next');
+    list.textContent = '';
+    for (let n = g.n + 1; n <= g.n + 5; n++) {
+      const start = bolsterAt(n * LEG + 1), li = document.createElement('li'), b = document.createElement('b');
+      b.textContent = clockTime(n * LEG);
+      li.append(b, ` he sets out ${placeName(start.x, start.z)}`);
+      list.appendChild(li);
+    }
+  }
+  function openCheat() {
+    if (!lanes.length || !viewer) return;
+    fillCheat();
+    cheatEl.hidden = false;
+    clearInterval(cheatTimer);
+    cheatTimer = setInterval(fillCheat, 5000);
+  }
+  function closeCheat() {
+    cheatEl.hidden = true;
+    clearInterval(cheatTimer);
+    if (location.hash === '#cheat') history.replaceState(null, '', location.pathname + location.search);
+  }
+  document.getElementById('cheat-close').addEventListener('click', closeCheat);
+  document.getElementById('cheat-go').addEventListener('click', () => {
+    const g = bolsterAt(unix());
+    flyTo(g.x + M.area.cx, M.area.cy - g.z, TALL / 2, 1.6);
+  });
+  document.getElementById('cheat-back').addEventListener('click', () => {
+    goneLeg = null;
+    try { localStorage.removeItem('bolster-gone'); } catch {}
+    fillCheat();
+  });
+  let typed = '';
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest?.('input, textarea') || e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return;
+    typed = (typed + e.key.toLowerCase()).slice(-7);
+    if (typed === 'bolster') cheatEl.hidden ? openCheat() : closeCheat();
+  });
+  window.addEventListener('hashchange', () => location.hash === '#cheat' && openCheat());
   // A link to a find: #bolster=<seconds since 1970>. The place follows from the time, so the link cannot lie.
   function openBolsterLink() {
     const m = location.hash.match(/^#bolster=(\d{9,11})$/);
